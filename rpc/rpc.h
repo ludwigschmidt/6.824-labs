@@ -298,6 +298,7 @@ class rpcs : public chanmgr {
 	// per client that that client hasn't acknowledged receiving yet.
         // indexed by client nonce.
 	std::map<unsigned int, std::list<reply_t> > reply_window_;
+  std::map<unsigned int, unsigned int> highest_xid_rep_;
 
 	void free_reply_window(void);
 	void add_reply(unsigned int clt_nonce, unsigned int xid, char *b, int sz);
