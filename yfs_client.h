@@ -34,6 +34,12 @@ class yfs_client {
  private:
   static std::string filename(inum);
   static inum n2i(std::string);
+  static bool parse_dir(const std::string&, std::list<dirent>*);
+  static std::string serialize_dir(const std::list<dirent>&);
+  int get_dir_data(inum dir, std::list<dirent>* data);
+  int put_dir_data(inum dir, const std::list<dirent>& data);
+  int static generate_file_id();
+
  public:
 
   yfs_client(std::string, std::string);
@@ -43,6 +49,10 @@ class yfs_client {
 
   int getfile(inum, fileinfo &);
   int getdir(inum, dirinfo &);
+
+  int lookup(inum dir, const std::string& name, inum* file);
+  int create_file(inum parent, const std::string& name, inum* file);
+  int read_dir(inum dir, std::list<dirent>* entries);
 };
 
 #endif 

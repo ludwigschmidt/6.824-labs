@@ -215,8 +215,14 @@ fuseserver_createhelper(fuse_ino_t parent, const char *name,
   e->attr_timeout = 0.0;
   e->entry_timeout = 0.0;
   e->generation = 0;
-  // You fill this in for Lab 2
-  return yfs_client::NOENT;
+
+  yfs_client::inum inum = 0;
+  yfs_client::status ret = yfs->create_file(parent, std::string(name), &inum);
+  if (ret == yfs_client::OK) {
+    e->ino = inum;
+    getattr(inum, e->attr);
+  }
+  return ret;
 }
 
 void
@@ -265,8 +271,14 @@ fuseserver_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
   e.entry_timeout = 0.0;
   e.generation = 0;
   bool found = false;
+  yfs_client::inum inum = 0;
+  yfs_client::status ret = yfs->lookup(parent, name, &inum);
+  if (ret == yfs_client::OK) {
+    found = true;
+    e.ino = inum;
+    getattr(inum, e.attr);
+  }
 
-  // You fill this in for Lab 2
   if (found)
     fuse_reply_entry(req, &e);
   else
@@ -326,9 +338,15 @@ fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size,
 
   memset(&b, 0, sizeof(b));
 
-
-  // You fill this in for Lab 2
-
+  std::list<yfs_client::dirent> entries; 
+  yfs_client::status ret = yfs->read_dir(ino, &entries);
+  if (ret != yfs_client::OK) {
+    return;
+  }
+  for (std::list<yfs_client::dirent>::iterator iter = entries.begin();
+      iter != entries.end(); ++iter) {
+    dirbuf_add(&b, iter->name.c_str(), iter->inum);
+  }
 
   reply_buf_limited(req, b.p, b.size, off, size);
   free(b.p);
