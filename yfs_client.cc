@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <cstdlib>
 #include <ctime>
+#include <algorithm>
 
 
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
@@ -227,4 +228,73 @@ int yfs_client::generate_file_id() {
 
 int yfs_client::read_dir(inum dir, std::list<dirent>* entries) {
   return get_dir_data(dir, entries);
+}
+
+int yfs_client::set_file_size(inum file, int size) {
+  std::string buf;
+  int r1 = get_file_data(file, &buf);
+  if (r1 != OK) {
+    return r1;
+  }
+  buf.resize(size, '\0');
+  return put_file_data(file, buf);
+}
+
+int yfs_client::get_file_data(inum file, std::string* buf) {
+  int rep = ec->get(file, *buf);
+  if (rep == extent_protocol::NOENT) {
+    return NOENT;
+  } else if (rep != extent_protocol::OK) {
+    if (rep == extent_protocol::RPCERR) {
+      return RPCERR;
+    } else {
+      return IOERR;
+    }
+  }
+  return OK;
+}
+
+int yfs_client::put_file_data(inum file, const std::string& buf) {
+  int rep = ec->put(file, buf);
+  if (rep == extent_protocol::NOENT) {
+    return NOENT;
+  } else if (rep != extent_protocol::OK) {
+    if (rep == extent_protocol::RPCERR) {
+      return RPCERR;
+    } else {
+      return IOERR;
+    }
+  }
+  return OK;
+}
+
+int yfs_client::read_file(inum file, int size, int offset, std::string* buf) {
+  std::string file_buf;
+  int rep = get_file_data(file, &file_buf);
+  if (rep != OK) {
+    return rep;
+  }
+  if (offset >= static_cast<int>(file_buf.length())) {
+    *buf = std::string();
+  } else {
+    int max_length = file_buf.size() - offset;
+    int to_read = std::min(max_length, size);
+    *buf = file_buf.substr(offset, to_read);
+  }
+  return OK;
+}
+
+int yfs_client::write_file(inum file, const char* buf, int size, int offset) {
+  std::string file_buf;
+  int rep = get_file_data(file, &file_buf);
+  if (rep != OK) {
+    return rep;
+  }
+  if (size + offset > static_cast<int>(file_buf.length())) {
+    file_buf.resize(size + offset, '\0');
+  }
+  for (int ii = 0; ii < size; ++ii) {
+    file_buf[ii + offset] = buf[ii];
+  }
+  return put_file_data(file, file_buf);
 }
