@@ -706,7 +706,7 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
         }
       } else {
         highest_xid_rep = highest_xid_rep_.insert(
-            std::make_pair(clt_nonce, xid)).first;
+            std::make_pair(clt_nonce, xid_rep)).first;
       }
 
       for (std::list<reply_t>::iterator iter = client_window->second.begin();
