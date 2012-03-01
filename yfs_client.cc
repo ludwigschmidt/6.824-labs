@@ -16,9 +16,8 @@
 
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
-  srand(time(NULL));
-
   ec = new extent_client(extent_dst);
+  lc = new lock_client(lock_dst);
 
   std::string rootdir;
   int r = ec->get(1, rootdir);
@@ -188,6 +187,11 @@ int yfs_client::put_dir_data(inum dir, const std::list<dirent>& data) {
 }
 
 int yfs_client::lookup(inum dir, const std::string& name, inum* file) {
+  server_lock dirlock(lc, dir);
+  if (!dirlock.is_ok()) {
+    return dirlock.status();
+  }
+
   std::list<dirent> entries;
   int r = get_dir_data(dir, &entries);
   if (r != OK) {
@@ -204,6 +208,11 @@ int yfs_client::lookup(inum dir, const std::string& name, inum* file) {
 }
 
 int yfs_client::create_file(inum parent, const std::string& name, inum* file) {
+  server_lock dirlock(lc, parent);
+  if (!dirlock.is_ok()) {
+    return dirlock.status();
+  }
+
   std::list<dirent> entries;
   int r = get_dir_data(parent, &entries);
   if (r != OK) {
@@ -216,8 +225,12 @@ int yfs_client::create_file(inum parent, const std::string& name, inum* file) {
       return EXIST;
     }
   }
+
   *file = generate_file_id();
-  ec->put(*file, std::string());
+  r = put_file_data(*file, std::string());
+  if (r != OK) {
+    return r;
+  }
 
   dirent newent;
   newent.name = name;
@@ -227,15 +240,61 @@ int yfs_client::create_file(inum parent, const std::string& name, inum* file) {
   return put_dir_data(parent, entries);
 }
 
+int yfs_client::create_dir(inum parent, const std::string& name, inum* dir) {
+  server_lock dirlock(lc, parent);
+  if (!dirlock.is_ok()) {
+    return dirlock.status();
+  }
+
+  std::list<dirent> entries;
+  int r = get_dir_data(parent, &entries);
+  if (r != OK) {
+    return r;
+  }
+  for (std::list<dirent>::iterator iter = entries.begin();
+      iter != entries.end(); ++iter) {
+    if (iter->name == name) {
+      *dir = iter->inum;
+      return EXIST;
+    }
+  }
+
+  *dir = generate_dir_id();
+  r = put_dir_data(*dir, std::list<dirent>());
+  if (r != OK) {
+    return r;
+  }
+
+  dirent newent;
+  newent.name = name;
+  newent.inum = *dir;
+  entries.push_back(newent);
+
+  return put_dir_data(parent, entries);
+}
+
 int yfs_client::generate_file_id() {
   return 0x80000000 | (rand() % 0x80000000);
 }
 
+int yfs_client::generate_dir_id() {
+  return rand() % 0x80000000;
+}
+
 int yfs_client::read_dir(inum dir, std::list<dirent>* entries) {
+  server_lock dirlock(lc, dir);
+  if (!dirlock.is_ok()) {
+    return dirlock.status();
+  }
   return get_dir_data(dir, entries);
 }
 
 int yfs_client::set_file_size(inum file, int size) {
+  server_lock filelock(lc, file);
+  if (!filelock.is_ok()) {
+    return filelock.status();
+  }
+
   std::string buf;
   int r1 = get_file_data(file, &buf);
   if (r1 != OK) {
@@ -274,6 +333,11 @@ int yfs_client::put_file_data(inum file, const std::string& buf) {
 }
 
 int yfs_client::read_file(inum file, int size, int offset, std::string* buf) {
+  server_lock filelock(lc, file);
+  if (!filelock.is_ok()) {
+    return filelock.status();
+  }
+
   std::string file_buf;
   int rep = get_file_data(file, &file_buf);
   if (rep != OK) {
@@ -290,6 +354,11 @@ int yfs_client::read_file(inum file, int size, int offset, std::string* buf) {
 }
 
 int yfs_client::write_file(inum file, const char* buf, int size, int offset) {
+  server_lock filelock(lc, file);
+  if (!filelock.is_ok()) {
+    return filelock.status();
+  }
+
   std::string file_buf;
   int rep = get_file_data(file, &file_buf);
   if (rep != OK) {
@@ -302,4 +371,54 @@ int yfs_client::write_file(inum file, const char* buf, int size, int offset) {
     file_buf[ii + offset] = buf[ii];
   }
   return put_file_data(file, file_buf);
+}
+
+int yfs_client::remove_file(inum parent, const std::string& name) {
+  server_lock dirlock(lc, parent);
+  if (!dirlock.is_ok()) {
+    return dirlock.status();
+  }
+
+  std::list<dirent> entries;
+  int r = get_dir_data(parent, &entries);
+  if (r != OK) {
+    return r;
+  }
+  std::list<dirent>::iterator iter = entries.begin();
+  for (; iter != entries.end(); ++iter) {
+    if (iter->name == name) {
+      break;
+    }
+  }
+  if (iter == entries.end()) {
+    return NOENT;
+  }
+  if (!isfile(iter->inum)) {
+    return IOERR;
+  }
+  
+  server_lock filelock(lc, iter->inum);
+  if (!filelock.is_ok()) {
+    return filelock.status();
+  }
+
+  r = remove_extent(iter->inum);
+  if (r != OK) {
+    return r;
+  }
+  entries.erase(iter);
+  return put_dir_data(parent, entries);
+}
+
+int yfs_client::remove_extent(inum id) {
+  extent_protocol::status r = ec->remove(id);
+  if (r == extent_protocol::OK) {
+    return OK;
+  } else if (r == extent_protocol::RPCERR) {
+    return RPCERR;
+  } else if (r == extent_protocol::NOENT) {
+    return NOENT;
+  } else {
+    return IOERR;
+  }
 }

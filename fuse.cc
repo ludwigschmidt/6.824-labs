@@ -412,8 +412,20 @@ fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
   (void) e;
 
   // You fill this in for Lab 3
-#if 0
-  fuse_reply_entry(req, &e);
+#if 1
+  yfs_client::inum inum = 0;
+  yfs_client::status ret = yfs->create_dir(parent, std::string(name), &inum);
+  if (ret == yfs_client::OK) {
+    e.ino = inum;
+    getattr(inum, e.attr);
+    fuse_reply_entry(req, &e);
+  } else if (ret == yfs_client::EXIST) {
+	  fuse_reply_err(req, EEXIST);
+  } else if (ret == yfs_client::NOENT) {
+	  fuse_reply_err(req, ENOENT);
+  } else {
+    fuse_reply_err(req, EIO);
+  }
 #else
   fuse_reply_err(req, ENOSYS);
 #endif
@@ -433,7 +445,15 @@ fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name)
   // You fill this in for Lab 3
   // Success:	fuse_reply_err(req, 0);
   // Not found:	fuse_reply_err(req, ENOENT);
-  fuse_reply_err(req, ENOSYS);
+  yfs_client::status ret = yfs->remove_file(parent, std::string(name));
+  if (ret == yfs_client::OK) {
+    fuse_reply_err(req, 0);
+  } else if (ret == yfs_client::NOENT) {
+    fuse_reply_err(req, ENOENT);
+  } else {
+    fuse_reply_err(req, EIO);
+  }
+  //fuse_reply_err(req, ENOSYS);
 }
 
 void
