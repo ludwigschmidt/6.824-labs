@@ -40,6 +40,7 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
     ret = lock_protocol::OK;
     iter->second.locked_by = id;
     iter->second.revoked = false;
+    iter->second.waiting.erase(id);
   }
 
   pthread_mutex_unlock(&server_mutex);
@@ -57,7 +58,8 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
          int &r)
 {
   lock_protocol::status ret = lock_protocol::OK;
-  lock_entry::client_set clients_to_wake_up;
+  std::string client_to_wake_up;
+  bool also_send_revoke = false;
 
   pthread_mutex_lock(&server_mutex);
 
@@ -67,16 +69,23 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
   } else {
     iter->second.locked_by = "";
     iter->second.revoked = false;
-    clients_to_wake_up = iter->second.waiting;
-    iter->second.waiting.clear();
+    if (!iter->second.waiting.empty()) {
+      client_to_wake_up = *iter->second.waiting.begin();
+      if (iter->second.waiting.size() > 1) {
+        also_send_revoke = true;
+      }
+    }
   }
 
   pthread_mutex_unlock(&server_mutex);
 
-  for (lock_entry::client_set::iterator iter2 = clients_to_wake_up.begin();
-      iter2 != clients_to_wake_up.end(); ++iter2) {
-    int r;
-    handle(*iter2).safebind()->call(rlock_protocol::retry, lid, r);
+  if (!client_to_wake_up.empty()) {
+    handle(client_to_wake_up).safebind()->call(rlock_protocol::retry, lid, r);
+
+    if (also_send_revoke) {
+      handle(client_to_wake_up).safebind()->call(rlock_protocol::revoke, lid,
+          r);
+    }
   }
 
   return ret;
