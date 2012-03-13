@@ -34,7 +34,7 @@ lock_client::acquire(lock_protocol::lockid_t lid)
   lock_protocol::status ret = cl->call(lock_protocol::acquire, cl->id(), lid,
       r);
   VERIFY (ret == lock_protocol::OK);
-  return r;
+  return ret;
 }
 
 lock_protocol::status
@@ -44,6 +44,6 @@ lock_client::release(lock_protocol::lockid_t lid)
   lock_protocol::status ret = cl->call(lock_protocol::release, cl->id(), lid,
       r);
   VERIFY (ret == lock_protocol::OK);
-  return r;
+  return ret;
 }
 
