@@ -188,11 +188,6 @@ int yfs_client::put_dir_data(inum dir, const std::list<dirent>& data) {
 }
 
 int yfs_client::lookup(inum dir, const std::string& name, inum* file) {
-  server_lock dirlock(lc, dir);
-  if (!dirlock.is_ok()) {
-    return dirlock.status();
-  }
-
   std::list<dirent> entries;
   int r = get_dir_data(dir, &entries);
   if (r != OK) {
@@ -283,10 +278,6 @@ int yfs_client::generate_dir_id() {
 }
 
 int yfs_client::read_dir(inum dir, std::list<dirent>* entries) {
-  server_lock dirlock(lc, dir);
-  if (!dirlock.is_ok()) {
-    return dirlock.status();
-  }
   return get_dir_data(dir, entries);
 }
 
@@ -334,11 +325,6 @@ int yfs_client::put_file_data(inum file, const std::string& buf) {
 }
 
 int yfs_client::read_file(inum file, int size, int offset, std::string* buf) {
-  server_lock filelock(lc, file);
-  if (!filelock.is_ok()) {
-    return filelock.status();
-  }
-
   std::string file_buf;
   int rep = get_file_data(file, &file_buf);
   if (rep != OK) {
