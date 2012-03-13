@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "lock_server_cache.h"
+#include "lock_server.h"
 
 #include "jsl_log.h"
 
