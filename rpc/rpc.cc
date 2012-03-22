@@ -662,8 +662,70 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	ScopedLock rwl(&reply_window_m_);
 
-        // You fill this in for Lab 1.
-	return NEW;
+  rpcs::rpcstate_t rv;
+  bool found_reply = false;
+  std::list<reply_t>::iterator reply;
+  std::map<unsigned int, std::list<reply_t> >::iterator client_window =
+      reply_window_.find(clt_nonce);
+
+  if (client_window != reply_window_.end()) {
+    for (reply = client_window->second.begin();
+        reply != client_window->second.end(); ++reply) {
+      if (reply->xid == xid) {
+        found_reply = true;
+        break;
+      }
+    }
+  }
+
+  if (found_reply) {
+    if (reply->cb_present) {
+      *b = reply->buf;
+      *sz = reply->sz;
+      rv = DONE;
+    } else {
+      rv = INPROGRESS;
+    }
+  } else {
+    std::map<unsigned int, unsigned int>::iterator highest_xid_rep =
+        highest_xid_rep_.find(clt_nonce);
+
+    if (highest_xid_rep != highest_xid_rep_.end()
+        && highest_xid_rep->second >= xid) {
+      rv = FORGOTTEN;
+    } else {
+      if (client_window == reply_window_.end()) {
+        client_window = reply_window_.insert(std::make_pair(clt_nonce,
+            std::list<reply_t>())).first;
+      }
+      client_window->second.push_back(reply_t(xid));
+
+      if (highest_xid_rep != highest_xid_rep_.end()) {
+        if (xid_rep > highest_xid_rep->second) {
+          highest_xid_rep->second = xid_rep;
+        }
+      } else {
+        highest_xid_rep = highest_xid_rep_.insert(
+            std::make_pair(clt_nonce, xid_rep)).first;
+      }
+
+      for (std::list<reply_t>::iterator iter = client_window->second.begin();
+          iter != client_window->second.end(); ) {
+        if (iter->xid <= highest_xid_rep->second) {
+          std::list<reply_t>::iterator to_remove = iter;
+          ++iter;
+          free(to_remove->buf);
+          client_window->second.erase(to_remove);
+        } else {
+          ++iter;
+        }
+      }
+
+      rv = NEW;
+    }
+  }
+
+  return rv;
 }
 
 // rpcs::dispatch calls add_reply when it is sending a reply to an RPC,
@@ -676,7 +738,16 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		char *b, int sz)
 {
 	ScopedLock rwl(&reply_window_m_);
-        // You fill this in for Lab 1.
+  std::map<unsigned int, std::list<reply_t> >::iterator window =
+      reply_window_.find(clt_nonce);
+  for (std::list<reply_t>::iterator iter = window->second.begin();
+      iter != window->second.end(); ++iter) {
+    if (iter->xid == xid) {
+      iter->buf = b;
+      iter->sz = sz;
+      iter->cb_present = true;
+    }
+  }
 }
 
 void
