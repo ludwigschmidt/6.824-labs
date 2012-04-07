@@ -40,6 +40,13 @@ main(int argc, char *argv[])
    rsm rsm(argv[1], argv[2]);
 #endif // RSM
 
+#ifndef RSM
+  lock_server_cache ls;
+  rpcs server(atoi(argv[1]), count);
+  server.reg(lock_protocol::stat, &ls, &lock_server_cache::stat);
+  server.reg(lock_protocol::acquire, &ls, &lock_server_cache::acquire);
+  server.reg(lock_protocol::release, &ls, &lock_server_cache::release);
+#endif
 
   while(1)
     sleep(1000);

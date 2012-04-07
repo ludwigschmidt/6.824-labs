@@ -8,6 +8,10 @@
 #include "extent_protocol.h"
 
 class extent_server {
+  pthread_mutex_t mutex;
+  typedef std::map<extent_protocol::extentid_t, std::pair<std::string,
+      extent_protocol::attr> > extent_map;
+  extent_map data;
 
  public:
   extent_server();
