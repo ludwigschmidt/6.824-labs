@@ -294,6 +294,8 @@ acceptor::preparereq(std::string src, paxos_protocol::preparearg a,
   // Remember to initialize *BOTH* r.accept and r.oldinstance appropriately.
   // Remember to *log* the proposal if the proposal is accepted.
 
+  ScopedLock ml(&pxs_mutex);
+
   if (a.instance <= instance_h) {
     r.oldinstance = true;
     r.accept = false;
@@ -320,13 +322,20 @@ acceptor::acceptreq(std::string src, paxos_protocol::acceptarg a, bool &r)
   // You fill this in for Lab 6
   // Remember to *log* the accept if the proposal is accepted.
 
-  if (a.n >= n_h) {
-    n_a = a.n;
-    v_a = a.v;
-    l->logaccept(n_a, v_a);
-    r = true;
+  ScopedLock ml(&pxs_mutex);
+
+  if (a.instance == instance_h + 1) {
+    if (a.n >= n_h) {
+      n_a = a.n;
+      v_a = a.v;
+      l->logaccept(n_a, v_a);
+      r = true;
+    } else {
+      r = false;
+    }
+  } else if (a.instance <= instance_h) {
   } else {
-    r = false;
+    VERIFY(0);
   }
 
   return paxos_protocol::OK;
