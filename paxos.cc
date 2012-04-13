@@ -165,16 +165,11 @@ proposer::prepare(unsigned instance, std::vector<std::string> &accepts,
   for (unsigned int ii = 0; ii < nodes.size() && !oldinstance; ++ii) {
     const std::string& cur = nodes[ii];
 
-    VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
-    int ret = 0;
     handle h(cur);
     rpcc *cl = h.safebind();
     if (cl != NULL) {
-      ret = cl->call(paxos_protocol::preparereq, me, arg, res, rpcc::to(1000));
-    }
-    VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
-
-    if (cl != NULL) {
+      int ret =
+          cl->call(paxos_protocol::preparereq, me, arg, res, rpcc::to(1000));
       if (ret == paxos_protocol::OK) {
         if (res.oldinstance) {
           acc->commit(instance, res.v_a);
@@ -216,17 +211,11 @@ proposer::accept(unsigned instance, std::vector<std::string> &accepts,
   for (unsigned int ii = 0; ii < nodes.size(); ++ii) {
     const std::string& cur = nodes[ii];
 
-    VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
-    int ret = 0;
     handle h(cur);
     rpcc *cl = h.safebind();
     if (cl != NULL) {
-      ret = cl->call(paxos_protocol::acceptreq, me, arg, accepted,
+      int ret = cl->call(paxos_protocol::acceptreq, me, arg, accepted,
           rpcc::to(1000));
-    }
-    VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
-
-    if (cl != NULL) {
       if (ret == paxos_protocol::OK) {
         if (accepted) {
           accepts.push_back(cur);
@@ -240,8 +229,6 @@ void
 proposer::decide(unsigned instance, std::vector<std::string> accepts, 
 	      std::string v)
 {
-  // You fill this in for Lab 6
-
   paxos_protocol::decidearg arg;
   arg.instance = instance;
   arg.v = v;
@@ -249,14 +236,12 @@ proposer::decide(unsigned instance, std::vector<std::string> accepts,
   for (unsigned int ii = 0; ii < accepts.size(); ++ii) {
     const std::string& cur = accepts[ii];
 
-    VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
     handle h(cur);
     rpcc *cl = h.safebind();
     if (cl != NULL) {
       int r;
       cl->call(paxos_protocol::decidereq, me, arg, r, rpcc::to(1000));
     }
-    VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
   }
 }
 
