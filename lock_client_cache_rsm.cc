@@ -44,6 +44,8 @@ lock_client_cache_rsm::lock_client_cache_rsm(std::string xdst,
   // You fill this in Step Two, Lab 7
   // - Create rsmc, and use the object to do RPC 
   //   calls instead of the rpcc object of lock_client
+  rsmc = new rsm_client(xdst);
+
   pthread_t th;
   int r = pthread_create(&th, NULL, &releasethread, (void *) this);
   VERIFY (r == 0);
@@ -66,7 +68,7 @@ lock_client_cache_rsm::releaser()
     }
 
     int r;
-    cl->call(lock_protocol::release, e.lid, id, e.xid, r);
+    rsmc->call(lock_protocol::release, e.lid, id, e.xid, r);
 
     pthread_mutex_lock(&client_mutex);
     lock_map::iterator iter = locks.find(e.lid);
@@ -103,7 +105,7 @@ lock_client_cache_rsm::acquire(lock_protocol::lockid_t lid)
       pthread_mutex_unlock(&client_mutex);
 
       int r;
-      lock_protocol::status rpcret = cl->call(lock_protocol::acquire, lid, id,
+      lock_protocol::status rpcret = rsmc->call(lock_protocol::acquire, lid, id,
           current_xid, r);
 
       pthread_mutex_lock(&client_mutex);
@@ -158,7 +160,7 @@ lock_client_cache_rsm::release(lock_protocol::lockid_t lid)
       }
 
       int r;
-      ret = cl->call(lock_protocol::release, lid, id, xid, r);
+      ret = rsmc->call(lock_protocol::release, lid, id, xid, r);
 
       pthread_mutex_lock(&client_mutex);
       iter->second.state = NONE;

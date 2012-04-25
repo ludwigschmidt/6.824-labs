@@ -345,8 +345,70 @@ rsm::execute(int procno, std::string req, std::string &r)
 rsm_client_protocol::status
 rsm::client_invoke(int procno, std::string req, std::string &r)
 {
-  int ret = rsm_client_protocol::OK;
+  // printf("in client_invoke %d\n", procno);
+
   // You fill this in for Lab 7
+  ScopedLock ml(&invoke_mutex);
+  // printf("acquired invoke mutex\n");
+  pthread_mutex_lock(&rsm_mutex);
+  // printf("acquired rsm mutex\n");
+
+  int ret = rsm_client_protocol::OK;
+
+  if (inviewchange) {
+    // printf("returning busy because in view change\n");
+    // fflush(stdout);
+    ret = rsm_client_protocol::BUSY;
+  } else if (primary != cfg->myaddr()) {
+    // printf("returning notprimary because not primary\n");
+    // fflush(stdout);
+    ret = rsm_client_protocol::NOTPRIMARY;
+  } else {
+    viewstamp cur_vs = myvs;
+    last_myvs = myvs;
+    ++myvs.seqno;
+
+    // printf("in client_invoke %d before getview\n", procno);
+    // fflush(stdout);
+
+    bool all_ok = true;
+    std::vector<std::string> cur_view = cfg->get_view(vid_commit);
+
+    // printf("in client_invoke %d before loop\n", procno);
+    // fflush(stdout);
+
+    for (unsigned int ii = 0; ii < cur_view.size() && all_ok; ++ii) {
+      const std::string& cur_replica = cur_view[ii];
+      if (cur_replica != primary) {
+        pthread_mutex_unlock(&rsm_mutex);
+
+        int dummy;
+        rsm_protocol::status ret = handle(cur_replica).safebind()->call(
+            rsm_protocol::invoke, procno, cur_vs, req, dummy, rpcc::to(1000));
+
+        pthread_mutex_lock(&rsm_mutex);
+
+        if (ret != rsm_protocol::OK) {
+          // printf("setting allok false because of replica %s\n",
+          //    cur_replica.c_str());
+          // fflush(stdout);
+          all_ok = false;
+        }
+      }
+    }
+
+    if (all_ok) {
+      execute(procno, req, r);
+    } else {
+      // printf("returning busy because not all ok\n");
+      // fflush(stdout);
+      ret = rsm_client_protocol::BUSY;
+    }
+  }
+
+  pthread_mutex_unlock(&rsm_mutex);
+  // printf("client_invoke returns %d\n", ret);
+  // fflush(stdout);
   return ret;
 }
 
@@ -360,8 +422,25 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
 rsm_protocol::status
 rsm::invoke(int proc, viewstamp vs, std::string req, int &dummy)
 {
-  rsm_protocol::status ret = rsm_protocol::OK;
   // You fill this in for Lab 7
+  ScopedLock ml(&invoke_mutex);
+  ScopedLock rl(&rsm_mutex);
+
+  rsm_protocol::status ret = rsm_protocol::OK;
+
+  if (inviewchange) {
+    ret = rsm_protocol::ERR;
+  } else if (primary == cfg->myaddr()) {
+    ret = rsm_protocol::ERR;
+  } else if (vs != myvs) {
+    ret = rsm_protocol::ERR;
+  } else {
+    last_myvs = myvs;
+    ++myvs.seqno;
+    std::string r;
+    execute(proc, req, r);
+  }
+
   return ret;
 }
 

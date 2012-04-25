@@ -44,10 +44,12 @@ lock_server_cache_rsm::revoker()
   while (true) {
     task_entry e;
     revoke_queue.deq(&e);
-
-    int r;
-    //printf("sending revoke for lock %lld to %s\n", e.lid, e.id.c_str());
-    handle(e.id).safebind()->call(rlock_protocol::revoke, e.lid, e.xid, r);
+    
+    if (rsm->amiprimary()) {
+      int r;
+      //printf("sending revoke for lock %lld to %s\n", e.lid, e.id.c_str());
+      handle(e.id).safebind()->call(rlock_protocol::revoke, e.lid, e.xid, r);
+    }
   }
 }
 
@@ -59,9 +61,11 @@ lock_server_cache_rsm::retryer()
     task_entry e;
     retry_queue.deq(&e);
 
-    int r;
-    //printf("sending retry for lock %lld to %s\n", e.lid, e.id.c_str());
-    handle(e.id).safebind()->call(rlock_protocol::retry, e.lid, e.xid, r);
+    if (rsm->amiprimary()) {
+      int r;
+      //printf("sending retry for lock %lld to %s\n", e.lid, e.id.c_str());
+      handle(e.id).safebind()->call(rlock_protocol::retry, e.lid, e.xid, r);
+    }
   }
 }
 
