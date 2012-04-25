@@ -187,14 +187,25 @@ lock_server_cache_rsm::release(lock_protocol::lockid_t lid, std::string id,
 std::string
 lock_server_cache_rsm::marshal_state()
 {
-  std::ostringstream ost;
-  std::string r;
-  return r;
+  pthread_mutex_lock(&server_mutex);
+
+  marshall rep;
+  rep << locks;
+
+  pthread_mutex_unlock(&server_mutex);
+
+  return rep.str();
 }
 
 void
 lock_server_cache_rsm::unmarshal_state(std::string state)
 {
+  pthread_mutex_lock(&server_mutex);
+
+  unmarshall rep(state);
+  rep >> locks;
+
+  pthread_mutex_unlock(&server_mutex);
 }
 
 lock_protocol::status
@@ -205,3 +216,23 @@ lock_server_cache_rsm::stat(lock_protocol::lockid_t lid, int &r)
   return lock_protocol::OK;
 }
 
+
+marshall& operator <<(marshall& m, const lock_server_cache_rsm::lock_entry& e) {
+  m << e.locked_by;
+  m << e.revoked;
+  m << e.waiting;
+  m << e.highest_xid_from_client;
+  m << e.highest_xid_acquire_reply;
+  m << e.highest_xid_release_reply;
+  return m;
+}
+
+unmarshall& operator >>(unmarshall& m, lock_server_cache_rsm::lock_entry& e) {
+  m >> e.locked_by;
+  m >> e.revoked;
+  m >> e.waiting;
+  m >> e.highest_xid_from_client;
+  m >> e.highest_xid_acquire_reply;
+  m >> e.highest_xid_release_reply;
+  return m;
+}

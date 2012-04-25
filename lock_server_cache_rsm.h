@@ -12,6 +12,7 @@
 #include "rpc/fifo.h"
 
 class lock_server_cache_rsm : public rsm_state_transfer {
+ public:
   typedef std::map<std::string, int> client_reply_map;
   typedef std::set<std::string> client_set;
   typedef std::map<std::string, lock_protocol::xid_t> client_xid_map;
@@ -26,6 +27,7 @@ class lock_server_cache_rsm : public rsm_state_transfer {
 
     lock_entry(): revoked(false) {}
   };
+
   struct task_entry {
     std::string id;
     lock_protocol::lockid_t lid;
@@ -56,5 +58,33 @@ class lock_server_cache_rsm : public rsm_state_transfer {
   int release(lock_protocol::lockid_t, std::string id, lock_protocol::xid_t,
 	      int &);
 };
+
+template <class C> marshall &
+operator<<(marshall &m, std::set<C> s)
+{
+	m << (unsigned int) s.size();
+	for (typename std::set<C>::const_iterator iter = s.begin();
+      iter != s.end(); ++iter) {
+    m << *iter;
+  }
+	return m;
+}
+
+template <class C> unmarshall &
+operator>>(unmarshall &u, std::set<C> &s)
+{
+	unsigned n;
+	u >> n;
+	for(unsigned i = 0; i < n; i++){
+		C z;
+		u >> z;
+		s.insert(z);
+	}
+	return u;
+}
+
+marshall& operator <<(marshall& m, const lock_server_cache_rsm::lock_entry& e);
+unmarshall& operator >>(unmarshall& m, lock_server_cache_rsm::lock_entry& e);
+
 
 #endif
