@@ -29,6 +29,8 @@ retrythread(void *x)
 lock_server_cache_rsm::lock_server_cache_rsm(class rsm *_rsm) 
   : rsm (_rsm)
 {
+  pthread_mutex_init(&server_mutex, NULL);
+
   pthread_t th;
   int r = pthread_create(&th, NULL, &revokethread, (void *) this);
   VERIFY (r == 0);
@@ -39,20 +41,28 @@ lock_server_cache_rsm::lock_server_cache_rsm(class rsm *_rsm)
 void
 lock_server_cache_rsm::revoker()
 {
+  while (true) {
+    task_entry e;
+    revoke_queue.deq(&e);
 
-  // This method should be a continuous loop, that sends revoke
-  // messages to lock holders whenever another client wants the
-  // same lock
+    int r;
+    //printf("sending revoke for lock %lld to %s\n", e.lid, e.id.c_str());
+    handle(e.id).safebind()->call(rlock_protocol::revoke, e.lid, e.xid, r);
+  }
 }
 
 
 void
 lock_server_cache_rsm::retryer()
 {
+  while (true) {
+    task_entry e;
+    retry_queue.deq(&e);
 
-  // This method should be a continuous loop, waiting for locks
-  // to be released and then sending retry messages to those who
-  // are waiting for it.
+    int r;
+    //printf("sending retry for lock %lld to %s\n", e.lid, e.id.c_str());
+    handle(e.id).safebind()->call(rlock_protocol::retry, e.lid, e.xid, r);
+  }
 }
 
 
@@ -60,6 +70,57 @@ int lock_server_cache_rsm::acquire(lock_protocol::lockid_t lid, std::string id,
              lock_protocol::xid_t xid, int &)
 {
   lock_protocol::status ret = lock_protocol::OK;
+  std::string send_revoke_to;
+
+  pthread_mutex_lock(&server_mutex);
+
+  lock_map::iterator iter = locks.find(lid);
+  if (iter == locks.end()) {
+    iter = locks.insert(std::make_pair(lid, lock_entry())).first;
+  }
+  
+  lock_entry& le = iter->second;
+  client_xid_map::iterator xid_iter = le.highest_xid_from_client.find(id);
+
+  if (xid_iter == le.highest_xid_from_client.end()
+      || xid_iter->second < xid) {
+    le.highest_xid_release_reply.erase(id);
+    le.highest_xid_from_client[id] = xid;
+
+    if (!le.locked_by.empty()) {
+      ret = lock_protocol::RETRY;
+      le.waiting.insert(id);
+      if (!le.revoked) {
+        le.revoked = true;
+        const std::string& client_to_revoke = le.locked_by;
+        revoke_queue.enq(task_entry(client_to_revoke, lid,
+            le.highest_xid_from_client[client_to_revoke]));
+      }
+    } else {
+      ret = lock_protocol::OK;
+      iter->second.locked_by = id;
+      iter->second.revoked = false;
+      iter->second.waiting.erase(id);
+
+      //printf("gave lock %lld to %s\n", lid, id.c_str());
+
+      if (!le.waiting.empty()) {
+        iter->second.revoked = true;
+        revoke_queue.enq(task_entry(id, lid, xid));
+      }
+    }
+
+    le.highest_xid_acquire_reply[id] = ret;
+  } else if (xid_iter->second == xid) {
+    ret = le.highest_xid_acquire_reply[id];
+  } else {
+    printf("ERROR: received acquire with old xid. "
+        "Highest seen: %lld, current xid: %lld\n", xid_iter->second, xid);
+    ret = lock_protocol::RPCERR;
+  }
+
+  pthread_mutex_unlock(&server_mutex);
+
   return ret;
 }
 
@@ -68,6 +129,54 @@ lock_server_cache_rsm::release(lock_protocol::lockid_t lid, std::string id,
          lock_protocol::xid_t xid, int &r)
 {
   lock_protocol::status ret = lock_protocol::OK;
+
+  //printf("entry: %s release lock %lld\n", id.c_str(), lid);
+
+  pthread_mutex_lock(&server_mutex);
+
+  lock_map::iterator iter = locks.find(lid);
+  if (iter == locks.end()) {
+    printf("ERROR: received release for non-existing lock.\n");
+    ret = lock_protocol::NOENT;
+  } else {
+    lock_entry& le = iter->second;
+
+    client_xid_map::iterator xid_iter = le.highest_xid_from_client.find(id);
+    if (xid_iter == le.highest_xid_from_client.end()) {
+      printf("ERROR: received release for lock with no recorded xid for this "
+          " client.\n");
+      ret = lock_protocol::RPCERR;
+    } else if (xid < xid_iter->second) {
+      printf("ERROR: received release with incorrect xid. "
+          " xid: %lld, highest acquire xid: %lld\n", xid, xid_iter->second);
+      ret = lock_protocol::RPCERR;
+    } else {
+      client_reply_map::iterator reply_iter =
+          le.highest_xid_release_reply.find(id);
+      if (reply_iter == le.highest_xid_release_reply.end()) {
+        if (le.locked_by != id) {
+          ret = lock_protocol::IOERR;
+          le.highest_xid_release_reply.insert(make_pair(id, ret));
+          printf("ERROR: received release from client not holding the lock.\n");
+        } else {
+          le.locked_by = "";
+          le.revoked = false;
+          le.highest_xid_release_reply.insert(make_pair(id, ret));
+          //printf("%s release lock %lld\n", id.c_str(), lid);
+          if (!le.waiting.empty()) {
+            const std::string& client_to_wake_up = *le.waiting.begin();
+            retry_queue.enq(task_entry(client_to_wake_up, lid,
+                le.highest_xid_from_client[client_to_wake_up]));
+          }
+        }
+      } else {
+        ret = reply_iter->second;
+      }
+    }
+  }
+
+  pthread_mutex_unlock(&server_mutex);
+
   return ret;
 }
 

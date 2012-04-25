@@ -9,6 +9,7 @@
 #include "rpc.h"
 #include "lock_client.h"
 #include "lang/verify.h"
+#include "rpc/fifo.h"
 
 #include "rsm_client.h"
 
@@ -27,6 +28,21 @@ class lock_client_cache_rsm;
 // Clients that caches locks.  The server can revoke locks using 
 // lock_revoke_server.
 class lock_client_cache_rsm : public lock_client {
+  enum lock_state { NONE, ACQUIRING, LOCKED, FREE, RELEASING };
+  struct lock_entry {
+    lock_state state;
+    bool retry;
+    bool revoked;
+    lock_protocol::xid_t xid;
+    lock_entry(): state(NONE), retry(false), revoked(false), xid(0) {}
+  };
+  struct release_entry {
+    lock_protocol::lockid_t lid;
+    lock_protocol::xid_t xid;
+    release_entry(lock_protocol::lockid_t lid_ = 0,
+        lock_protocol::xid_t xid_ = 0) : lid(lid_), xid(xid_) {}
+  };
+
  private:
   rsm_client *rsmc;
   class lock_release_user *lu;
@@ -34,6 +50,13 @@ class lock_client_cache_rsm : public lock_client {
   std::string hostname;
   std::string id;
   lock_protocol::xid_t xid;
+
+  pthread_mutex_t client_mutex;
+  pthread_cond_t acquire_cv;
+  typedef std::map<lock_protocol::lockid_t, lock_entry> lock_map;
+  lock_map locks;
+  fifo<release_entry> release_queue;
+
  public:
   static int last_port;
   lock_client_cache_rsm(std::string xdst, class lock_release_user *l = 0);
