@@ -122,9 +122,19 @@ lock_client_cache_rsm::acquire(lock_protocol::lockid_t lid)
       iter->second.state = LOCKED;
       have_lock = true;
     } else if (iter->second.state == LOCKED 
-        || (iter->second.state == ACQUIRING && !iter->second.retry)
         || iter->second.state == RELEASING) {
       pthread_cond_wait(&acquire_cv, &client_mutex);
+    } else if (iter->second.state == ACQUIRING && !iter->second.retry) {
+      timespec absolute_time;
+      clock_gettime(CLOCK_REALTIME, &absolute_time);
+      absolute_time.tv_sec += 3;
+      int r = pthread_cond_timedwait(&acquire_cv, &client_mutex,
+          &absolute_time);
+      if (r == ETIMEDOUT) {
+        iter->second.retry = true;
+      }
+    } else {
+      printf("ERROR: invalid case in acquire.\n");
     }
 
   } while (!have_lock && !error);

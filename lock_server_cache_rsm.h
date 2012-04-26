@@ -19,13 +19,12 @@ class lock_server_cache_rsm : public rsm_state_transfer {
 
   struct lock_entry {
     std::string locked_by;
-    bool revoked;
     client_set waiting;
     client_xid_map highest_xid_from_client;
     client_reply_map highest_xid_acquire_reply;
     client_reply_map highest_xid_release_reply;
 
-    lock_entry(): revoked(false) {}
+    lock_entry() {}
   };
 
   struct task_entry {

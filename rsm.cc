@@ -413,6 +413,7 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
     // printf("in client_invoke %d before loop\n", procno);
     // fflush(stdout);
 
+    bool first_replica = true;
     for (unsigned int ii = 0; ii < cur_view.size() && all_ok; ++ii) {
       const std::string& cur_replica = cur_view[ii];
       if (cur_replica != primary) {
@@ -436,6 +437,12 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
           //    cur_replica.c_str());
           // fflush(stdout);
           all_ok = false;
+        }
+
+        if (first_replica) {
+          breakpoint1();
+          first_replica = false;
+          partition1();
         }
       }
     }
@@ -482,6 +489,8 @@ rsm::invoke(int proc, viewstamp vs, std::string req, int &dummy)
     ++myvs.seqno;
     std::string r;
     execute(proc, req, r);
+
+    breakpoint1();
   }
 
   return ret;

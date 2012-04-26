@@ -94,22 +94,17 @@ int lock_server_cache_rsm::acquire(lock_protocol::lockid_t lid, std::string id,
     if (!le.locked_by.empty()) {
       ret = lock_protocol::RETRY;
       le.waiting.insert(id);
-      if (!le.revoked) {
-        le.revoked = true;
-        const std::string& client_to_revoke = le.locked_by;
-        revoke_queue.enq(task_entry(client_to_revoke, lid,
-            le.highest_xid_from_client[client_to_revoke]));
-      }
+      const std::string& client_to_revoke = le.locked_by;
+      revoke_queue.enq(task_entry(client_to_revoke, lid,
+          le.highest_xid_from_client[client_to_revoke]));
     } else {
       ret = lock_protocol::OK;
       iter->second.locked_by = id;
-      iter->second.revoked = false;
       iter->second.waiting.erase(id);
 
       //printf("gave lock %lld to %s\n", lid, id.c_str());
 
       if (!le.waiting.empty()) {
-        iter->second.revoked = true;
         revoke_queue.enq(task_entry(id, lid, xid));
       }
     }
@@ -164,7 +159,6 @@ lock_server_cache_rsm::release(lock_protocol::lockid_t lid, std::string id,
           printf("ERROR: received release from client not holding the lock.\n");
         } else {
           le.locked_by = "";
-          le.revoked = false;
           le.highest_xid_release_reply.insert(make_pair(id, ret));
           //printf("%s release lock %lld\n", id.c_str(), lid);
           if (!le.waiting.empty()) {
@@ -219,7 +213,6 @@ lock_server_cache_rsm::stat(lock_protocol::lockid_t lid, int &r)
 
 marshall& operator <<(marshall& m, const lock_server_cache_rsm::lock_entry& e) {
   m << e.locked_by;
-  m << e.revoked;
   m << e.waiting;
   m << e.highest_xid_from_client;
   m << e.highest_xid_acquire_reply;
@@ -229,7 +222,6 @@ marshall& operator <<(marshall& m, const lock_server_cache_rsm::lock_entry& e) {
 
 unmarshall& operator >>(unmarshall& m, lock_server_cache_rsm::lock_entry& e) {
   m >> e.locked_by;
-  m >> e.revoked;
   m >> e.waiting;
   m >> e.highest_xid_from_client;
   m >> e.highest_xid_acquire_reply;
