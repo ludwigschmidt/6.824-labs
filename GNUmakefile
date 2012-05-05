@@ -110,7 +110,7 @@ extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 fab_server=extent_server.cc fab_smain.cc $(fab_files)
 fab_server : $(patsubst %.cc,%.o,$(fab_server)) rpc/librpc.a
 
-fab_tester=fab_tester.cc extent_client.cc fab_client.cc
+fab_tester=fab_tester.cc extent_client.cc fab_client.cc handle.cc
 fab_tester : $(patsubst %.cc,%.o,$(fab_tester)) rpc/librpc.a
 
 test-lab-3-b=test-lab-3-b.c
