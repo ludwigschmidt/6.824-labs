@@ -42,7 +42,7 @@ lab4: yfs_client extent_server lock_server lock_tester test-lab-3-b\
 lab5: yfs_client extent_server lock_server test-lab-3-b test-lab-3-c
 lab6: lock_server rsm_tester
 lab7: lock_tester lock_server rsm_tester
-lab8: lock_server fab_server yfs_client test-lab-3-b test-lab-3-c 
+lab8: lock_server fab_server yfs_client fab_tester test-lab-3-b test-lab-3-c 
 
 hfiles1=rpc/fifo.h rpc/connection.h rpc/rpc.h rpc/marshall.h rpc/method_thread.h\
 	rpc/thr_pool.h rpc/pollmgr.h rpc/jsl_log.h rpc/slock.h rpc/rpctest.cc\
@@ -109,6 +109,9 @@ extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 
 fab_server=extent_server.cc fab_smain.cc $(fab_files)
 fab_server : $(patsubst %.cc,%.o,$(fab_server)) rpc/librpc.a
+
+fab_tester=fab_tester.cc extent_client.cc fab_client.cc
+fab_tester : $(patsubst %.cc,%.o,$(fab_tester)) rpc/librpc.a
 
 test-lab-3-b=test-lab-3-b.c
 test-lab-3-b:  $(patsubst %.c,%.o,$(test_lab_4-b)) rpc/librpc.a
