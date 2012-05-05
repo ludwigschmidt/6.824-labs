@@ -1,12 +1,12 @@
-#ifndef rsm_protocol_h
-#define rsm_protocol_h
+#ifndef fab_protocol_h
+#define fab_protocol_h
 
 #include "rpc.h"
 
 
-class rsm_client_protocol {
+class fab_client_protocol {
  public:
-  enum xxstatus { OK, ERR, NOTPRIMARY, BUSY};
+  enum xxstatus { OK, ERR, BUSY};
   typedef int status;
   enum rpc_numbers {
     invoke = 0x9001,
@@ -24,7 +24,7 @@ struct viewstamp {
   unsigned int seqno;
 };
 
-class rsm_protocol {
+class fab_protocol {
  public:
   enum xxstatus { OK, ERR, BUSY};
   typedef int status;
@@ -71,7 +71,7 @@ inline unmarshall& operator>>(unmarshall &u, viewstamp &v) {
 }
 
 inline marshall &
-operator<<(marshall &m, rsm_protocol::transferres r)
+operator<<(marshall &m, fab_protocol::transferres r)
 {
   m << r.state;
   m << r.last;
@@ -79,7 +79,7 @@ operator<<(marshall &m, rsm_protocol::transferres r)
 }
 
 inline unmarshall &
-operator>>(unmarshall &u, rsm_protocol::transferres &r)
+operator>>(unmarshall &u, fab_protocol::transferres &r)
 {
   u >> r.state;
   u >> r.last;
@@ -87,20 +87,20 @@ operator>>(unmarshall &u, rsm_protocol::transferres &r)
 }
 
 inline marshall &
-operator<<(marshall &m, rsm_protocol::joinres r)
+operator<<(marshall &m, fab_protocol::joinres r)
 {
   m << r.log;
   return m;
 }
 
 inline unmarshall &
-operator>>(unmarshall &u, rsm_protocol::joinres &r)
+operator>>(unmarshall &u, fab_protocol::joinres &r)
 {
   u >> r.log;
   return u;
 }
 
-class rsm_test_protocol {
+class fab_test_protocol {
  public:
   enum xxstatus { OK, ERR};
   typedef int status;
