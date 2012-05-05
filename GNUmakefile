@@ -107,7 +107,7 @@ yfs_client : $(patsubst %.cc,%.o,$(yfs_client)) rpc/librpc.a
 extent_server=extent_server.cc extent_smain.cc
 extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 
-fab_server=extent_server.cc fab_smain.cc $(fab_files)
+fab_server=fab_server.cc extent_server.cc $(fab_files)
 fab_server : $(patsubst %.cc,%.o,$(fab_server)) rpc/librpc.a
 
 fab_tester=fab_tester.cc extent_client.cc fab_client.cc handle.cc
