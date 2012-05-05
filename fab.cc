@@ -7,19 +7,19 @@
 // primary executes the request after it receives OKs from all backups,
 // and sends the reply back to the client.
 //
-// The config module will tell the RSM about a new view. If the
+// The config module will tell the fab about a new view. If the
 // primary in the previous view is a member of the new view, then it
 // will stay the primary.  Otherwise, the smallest numbered node of
 // the previous view will be the new primary.  In either case, the new
 // primary will be a node from the previous view.  The configuration
-// module constructs the sequence of views for the RSM and the RSM
+// module constructs the sequence of views for the fab and the fab
 // ensures there will be always one primary, who was a member of the
 // last view.
 //
 // When a new node starts, the recovery thread is in charge of joining
-// the RSM.  It will collect the internal RSM state from the primary;
+// the fab.  It will collect the internal fab state from the primary;
 // the primary asks the config module to add the new node and returns
-// to the joining the internal RSM state (e.g., paxos log). Since
+// to the joining the internal fab state (e.g., paxos log). Since
 // there is only one primary, all joins happen in well-defined total
 // order.
 //
@@ -30,7 +30,7 @@
 // primary of the previous view is in the current view, then it will
 // be the primary and its state is authoritive: the backups download
 // from the primary the current state.  A primary waits until all
-// backups have downloaded the state.  Once the RSM is in sync, the
+// backups have downloaded the state.  Once the fab is in sync, the
 // primary accepts requests again from clients.  If one of the backups
 // is the new primary, then its state is authoritative.  In either
 // scenario, the next view uses a node as primary that has the state
@@ -38,18 +38,18 @@
 // Therefore, if the nodes sync up before processing the next request,
 // the next view will have the correct state.
 //
-// While the RSM in a view change (i.e., a node has failed, a new view
+// While the fab in a view change (i.e., a node has failed, a new view
 // has been formed, but the sync hasn't completed), another failure
 // could happen, which complicates a view change.  During syncing the
 // primary or backups can timeout, and initiate another Paxos round.
-// There are 2 variables that RSM uses to keep track in what state it
+// There are 2 variables that fab uses to keep track in what state it
 // is:
-//    - inviewchange: a node has failed and the RSM is performing a view change
+//    - inviewchange: a node has failed and the fab is performing a view change
 //    - insync: this node is syncing its state
 //
 // If inviewchange is false and a node is the primary, then it can
 // process client requests. If it is true, clients are told to retry
-// later again.  While inviewchange is true, the RSM may go through several
+// later again.  While inviewchange is true, the fab may go through several
 // member list changes, one by one.   After a member list
 // change completes, the nodes tries to sync. If the sync complets,
 // the view change completes (and inviewchange is set to false).  If
@@ -67,7 +67,7 @@
 // execute in the same order.
 //
 // The implementation can be viewed as a layered system:
-//       RSM module     ---- in charge of replication
+//       fab module     ---- in charge of replication
 //       config module  ---- in charge of view management
 //       Paxos module   ---- in charge of running Paxos to agree on a value
 //
@@ -82,20 +82,20 @@
 #include <iostream>
 
 #include "handle.h"
-#include "rsm.h"
+#include "fab.h"
 #include "tprintf.h"
 #include "lang/verify.h"
-#include "rsm_client.h"
+#include "fab_client.h"
 
 static void *
 recoverythread(void *x)
 {
-  rsm *r = (rsm *) x;
+  fab *r = (fab *) x;
   r->recovery();
   return 0;
 }
 
-rsm::rsm(std::string _first, std::string _me) 
+fab::fab(std::string _first, std::string _me) 
   : stf(0), primary(_first), insync (false), inviewchange (true), vid_commit(0),
     partitioned (false), dopartition(false), break1(false), break2(false)
 {
@@ -106,7 +106,7 @@ rsm::rsm(std::string _first, std::string _me)
   myvs = last_myvs;
   myvs.seqno = 1;
 
-  pthread_mutex_init(&rsm_mutex, NULL);
+  pthread_mutex_init(&fab_mutex, NULL);
   pthread_mutex_init(&invoke_mutex, NULL);
   pthread_cond_init(&recovery_cond, NULL);
   pthread_cond_init(&sync_cond, NULL);
@@ -118,48 +118,50 @@ rsm::rsm(std::string _first, std::string _me)
     // do the commit, since at that time this->cfg is not initialized
     commit_change(1);
   }
-  rsmrpc = cfg->get_rpcs();
-  rsmrpc->reg(rsm_client_protocol::invoke, this, &rsm::client_invoke);
-  rsmrpc->reg(rsm_client_protocol::members, this, &rsm::client_members);
-  rsmrpc->reg(rsm_protocol::invoke, this, &rsm::invoke);
-  rsmrpc->reg(rsm_protocol::transferreq, this, &rsm::transferreq);
-  rsmrpc->reg(rsm_protocol::transferdonereq, this, &rsm::transferdonereq);
-  rsmrpc->reg(rsm_protocol::joinreq, this, &rsm::joinreq);
+  fabrpc = cfg->get_rpcs();
+  
+	fabrpc->reg(fab_client_protocol::invoke, this, &fab::client_invoke);
+  fabrpc->reg(fab_client_protocol::members, this, &fab::client_members);
+  
+	fabrpc->reg(fab_protocol::invoke, this, &fab::invoke);
+  fabrpc->reg(fab_protocol::transferreq, this, &fab::transferreq);
+  fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
+  fabrpc->reg(fab_protocol::joinreq, this, &fab::joinreq);
 
   // tester must be on different port, otherwise it may partition itself
   testsvr = new rpcs(atoi(_me.c_str()) + 1);
-  testsvr->reg(rsm_test_protocol::net_repair, this, &rsm::test_net_repairreq);
-  testsvr->reg(rsm_test_protocol::breakpoint, this, &rsm::breakpointreq);
+  testsvr->reg(fab_test_protocol::net_repair, this, &fab::test_net_repairreq);
+  testsvr->reg(fab_test_protocol::breakpoint, this, &fab::breakpointreq);
 
   {
-      ScopedLock ml(&rsm_mutex);
+      ScopedLock ml(&fab_mutex);
       VERIFY(pthread_create(&th, NULL, &recoverythread, (void *) this) == 0);
   }
 }
 
 void
-rsm::reg1(int proc, handler *h)
+fab::reg1(int proc, handler *h)
 {
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
   procs[proc] = h;
 }
 
 // The recovery thread runs this function
 void
-rsm::recovery()
+fab::recovery()
 {
   bool r = true;
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
 
   while (1) {
     while (!cfg->ismember(cfg->myaddr(), vid_commit)) {
       if (join(primary)) {
-	tprintf("recovery: joined\n");
+				tprintf("recovery: joined\n");
         commit_change_wo(cfg->vid());
       } else {
-	VERIFY(pthread_mutex_unlock(&rsm_mutex)==0);
-	sleep (5); // XXX make another node in cfg primary?
-	VERIFY(pthread_mutex_lock(&rsm_mutex)==0);
+				VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
+				sleep (5); // XXX make another node in cfg primary?
+				VERIFY(pthread_mutex_lock(&fab_mutex)==0);
       }
     }
     vid_insync = vid_commit;
@@ -182,26 +184,26 @@ rsm::recovery()
       inviewchange = false;
     }
     tprintf("recovery: go to sleep %d %d\n", insync, inviewchange);
-    pthread_cond_wait(&recovery_cond, &rsm_mutex);
+    pthread_cond_wait(&recovery_cond, &fab_mutex);
   }
 }
 
 bool
-rsm::sync_with_backups()
+fab::sync_with_backups()
 {
-  pthread_mutex_unlock(&rsm_mutex);
+  pthread_mutex_unlock(&fab_mutex);
   {
-    // Make sure that the state of lock_server_cache_rsm is stable during 
+    // Make sure that the state of lock_server_cache_fab is stable during 
     // synchronization; otherwise, the primary's state may be more recent
     // than replicas after the synchronization.
     ScopedLock ml(&invoke_mutex);
     // By acquiring and releasing the invoke_mutex once, we make sure that
-    // the state of lock_server_cache_rsm will not be changed until all
+    // the state of lock_server_cache_fab will not be changed until all
     // replicas are synchronized. The reason is that client_invoke arrives
     // after this point of time will see inviewchange == true, and returns
     // BUSY.
   }
-  pthread_mutex_lock(&rsm_mutex);
+  pthread_mutex_lock(&fab_mutex);
 
   backups.clear();
   std::vector<std::string> members = cfg->get_view(vid_insync);
@@ -216,7 +218,7 @@ rsm::sync_with_backups()
   //   - or there is a committed viewchange
 
   while (vid_insync == vid_commit && !backups.empty()) {
-    pthread_cond_wait(&recovery_cond, &rsm_mutex);
+    pthread_cond_wait(&recovery_cond, &fab_mutex);
   }
 
   insync = false;
@@ -225,7 +227,7 @@ rsm::sync_with_backups()
 
 
 bool
-rsm::sync_with_primary()
+fab::sync_with_primary()
 {
   // Remember the primary of vid_insync
   std::string m = primary;
@@ -250,26 +252,25 @@ rsm::sync_with_primary()
 
 /**
  * Call to transfer state from m to the local node.
- * Assumes that rsm_mutex is already held.
+ * Assumes that fab_mutex is already held.
  */
 bool
-rsm::statetransfer(std::string m)
+fab::statetransfer(std::string m)
 {
-  // Code will be provided in Lab 7
-  rsm_protocol::transferres r;
+	fab_protocol::transferres r;
   handle h(m);
   int ret;
-  tprintf("rsm::statetransfer: contact %s w. my last_myvs(%d,%d)\n", 
+  tprintf("fab::statetransfer: contact %s w. my last_myvs(%d,%d)\n", 
 	 m.c_str(), last_myvs.vid, last_myvs.seqno);
-  VERIFY(pthread_mutex_unlock(&rsm_mutex)==0);
+  VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
   rpcc *cl = h.safebind();
   if (cl) {
-    ret = cl->call(rsm_protocol::transferreq, cfg->myaddr(), 
+    ret = cl->call(fab_protocol::transferreq, cfg->myaddr(), 
                              last_myvs, vid_insync, r, rpcc::to(1000));
   }
-  VERIFY(pthread_mutex_lock(&rsm_mutex)==0);
-  if (cl == 0 || ret != rsm_protocol::OK) {
-    tprintf("rsm::statetransfer: couldn't reach %s %lx %d\n", m.c_str(), 
+  VERIFY(pthread_mutex_lock(&fab_mutex)==0);
+  if (cl == 0 || ret != fab_protocol::OK) {
+    tprintf("fab::statetransfer: couldn't reach %s %lx %d\n", m.c_str(), 
 	   (long unsigned) cl, ret);
     return false;
   }
@@ -277,71 +278,71 @@ rsm::statetransfer(std::string m)
     stf->unmarshal_state(r.state);
   }
   last_myvs = r.last;
-  tprintf("rsm::statetransfer transfer from %s success, vs(%d,%d)\n", 
+  tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
 	 m.c_str(), last_myvs.vid, last_myvs.seqno);
   return true;
 }
 
 bool
-rsm::statetransferdone(std::string m) {
+fab::statetransferdone(std::string m) {
   // You fill this in for Lab 7
   // - Inform primary that this slave has synchronized for vid_insync
 
   int ret = 0;
 
-  VERIFY(pthread_mutex_unlock(&rsm_mutex) == 0);
+  VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
   handle h(m);
   rpcc *cl = h.safebind();
   if (cl != NULL) {
     int r;
-    ret = cl->call(rsm_protocol::transferdonereq, cfg->myaddr(), vid_insync, 
+    ret = cl->call(fab_protocol::transferdonereq, cfg->myaddr(), vid_insync, 
 		   r, rpcc::to(1000));
   }
-  VERIFY(pthread_mutex_lock(&rsm_mutex) == 0);
+  VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
 
-  return cl != NULL && ret == rsm_protocol::OK;
+  return cl != NULL && ret == fab_protocol::OK;
 }
 
 
 bool
-rsm::join(std::string m) {
+fab::join(std::string m) {
   handle h(m);
   int ret;
-  rsm_protocol::joinres r;
+  fab_protocol::joinres r;
 
-  tprintf("rsm::join: %s mylast (%d,%d)\n", m.c_str(), last_myvs.vid, 
+  tprintf("fab::join: %s mylast (%d,%d)\n", m.c_str(), last_myvs.vid, 
           last_myvs.seqno);
-  VERIFY(pthread_mutex_unlock(&rsm_mutex)==0);
+  VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
   rpcc *cl = h.safebind();
   if (cl != 0) {
-    ret = cl->call(rsm_protocol::joinreq, cfg->myaddr(), last_myvs, 
+    ret = cl->call(fab_protocol::joinreq, cfg->myaddr(), last_myvs, 
 		   r, rpcc::to(120000));
   }
-  VERIFY(pthread_mutex_lock(&rsm_mutex)==0);
+  VERIFY(pthread_mutex_lock(&fab_mutex)==0);
 
-  if (cl == 0 || ret != rsm_protocol::OK) {
-    tprintf("rsm::join: couldn't reach %s %p %d\n", m.c_str(), 
+  if (cl == 0 || ret != fab_protocol::OK) {
+    tprintf("fab::join: couldn't reach %s %p %d\n", m.c_str(), 
 	   cl, ret);
     return false;
   }
-  tprintf("rsm::join: succeeded %s\n", r.log.c_str());
+  tprintf("fab::join: succeeded %s\n", r.log.c_str());
   cfg->restore(r.log);
   return true;
 }
 
 /*
- * Config informs rsm whenever it has successfully 
+ * Config informs fab whenever it has successfully 
  * completed a view change
  */
 void 
-rsm::commit_change(unsigned vid) 
+fab::commit_change(unsigned vid) 
 {
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
   commit_change_wo(vid);
 }
 
 void 
-rsm::commit_change_wo(unsigned vid) 
+fab::commit_change_wo(unsigned vid) 
 {
   if (vid <= vid_commit)
     return;
@@ -357,7 +358,7 @@ rsm::commit_change_wo(unsigned vid)
 
 
 void
-rsm::execute(int procno, std::string req, std::string &r)
+fab::execute(int procno, std::string req, std::string &r)
 {
   tprintf("execute\n");
   handler *h = procs[procno];
@@ -365,7 +366,7 @@ rsm::execute(int procno, std::string req, std::string &r)
   unmarshall args(req);
   marshall rep;
   std::string reps;
-  rsm_protocol::status ret = h->fn(args, rep);
+  fab_protocol::status ret = h->fn(args, rep);
   marshall rep1;
   rep1 << ret;
   rep1 << rep.str();
@@ -378,27 +379,27 @@ rsm::execute(int procno, std::string req, std::string &r)
 // number, and invokes it on all members of the replicated state
 // machine.
 //
-rsm_client_protocol::status
-rsm::client_invoke(int procno, std::string req, std::string &r)
+fab_client_protocol::status
+fab::client_invoke(int procno, std::string req, std::string &r)
 {
   // printf("in client_invoke %d\n", procno);
 
   // You fill this in for Lab 7
   ScopedLock ml(&invoke_mutex);
   // printf("acquired invoke mutex\n");
-  pthread_mutex_lock(&rsm_mutex);
-  // printf("acquired rsm mutex\n");
+  pthread_mutex_lock(&fab_mutex);
+  // printf("acquired fab mutex\n");
 
-  int ret = rsm_client_protocol::OK;
+  int ret = fab_client_protocol::OK;
 
   if (inviewchange) {
     // printf("returning busy because in view change\n");
     // fflush(stdout);
-    ret = rsm_client_protocol::BUSY;
+    ret = fab_client_protocol::BUSY;
   } else if (primary != cfg->myaddr()) {
     // printf("returning notprimary because not primary\n");
     // fflush(stdout);
-    ret = rsm_client_protocol::NOTPRIMARY;
+    ret = fab_client_protocol::NOTPRIMARY;
   } else {
     viewstamp cur_vs = myvs;
     last_myvs = myvs;
@@ -418,21 +419,21 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
       const std::string& cur_replica = cur_view[ii];
       if (cur_replica != primary) {
 
-        VERIFY(pthread_mutex_unlock(&rsm_mutex) == 0);
+        VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
 
-        rsm_protocol::status ret;
+        fab_protocol::status ret;
         handle h(cur_replica);
         rpcc *cl = h.safebind();
 
         if (cl != NULL) {
           int dummy;
-          ret = handle(cur_replica).safebind()->call(rsm_protocol::invoke,
+          ret = handle(cur_replica).safebind()->call(fab_protocol::invoke,
               procno, cur_vs, req, dummy, rpcc::to(1000));
         }
 
-        VERIFY(pthread_mutex_lock(&rsm_mutex) == 0);
+        VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
 
-        if (cl == NULL || ret != rsm_protocol::OK) {
+        if (cl == NULL || ret != fab_protocol::OK) {
           // printf("setting allok false because of replica %s\n",
           //    cur_replica.c_str());
           // fflush(stdout);
@@ -452,11 +453,11 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
     } else {
       // printf("returning busy because not all ok\n");
       // fflush(stdout);
-      ret = rsm_client_protocol::BUSY;
+      ret = fab_client_protocol::BUSY;
     }
   }
 
-  pthread_mutex_unlock(&rsm_mutex);
+  pthread_mutex_unlock(&fab_mutex);
   // printf("client_invoke returns %d\n", ret);
   // fflush(stdout);
   return ret;
@@ -469,21 +470,21 @@ rsm::client_invoke(int procno, std::string req, std::string &r)
 // the replica must execute requests in order (with no gaps) 
 // according to requests' seqno 
 
-rsm_protocol::status
-rsm::invoke(int proc, viewstamp vs, std::string req, int &dummy)
+fab_protocol::status
+fab::invoke(int proc, viewstamp vs, std::string req, int &dummy)
 {
   // You fill this in for Lab 7
   ScopedLock ml(&invoke_mutex);
-  ScopedLock rl(&rsm_mutex);
+  ScopedLock rl(&fab_mutex);
 
-  rsm_protocol::status ret = rsm_protocol::OK;
+  fab_protocol::status ret = fab_protocol::OK;
 
   if (inviewchange) {
-    ret = rsm_protocol::ERR;
+    ret = fab_protocol::ERR;
   } else if (primary == cfg->myaddr()) {
-    ret = rsm_protocol::ERR;
+    ret = fab_protocol::ERR;
   } else if (vs != myvs) {
-    ret = rsm_protocol::ERR;
+    ret = fab_protocol::ERR;
   } else {
     last_myvs = myvs;
     ++myvs.seqno;
@@ -499,17 +500,17 @@ rsm::invoke(int proc, viewstamp vs, std::string req, int &dummy)
 /**
  * RPC handler: Send back the local node's state to the caller
  */
-rsm_protocol::status
-rsm::transferreq(std::string src, viewstamp last, unsigned vid, 
-rsm_protocol::transferres &r)
+fab_protocol::status
+fab::transferreq(std::string src, viewstamp last, unsigned vid, 
+fab_protocol::transferres &r)
 {
-  ScopedLock ml(&rsm_mutex);
-  int ret = rsm_protocol::OK;
+  ScopedLock ml(&fab_mutex);
+  int ret = fab_protocol::OK;
   // Code will be provided in Lab 7
   tprintf("transferreq from %s (%d,%d) vs (%d,%d)\n", src.c_str(), 
 	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
   if (!insync || vid != vid_insync) {
-     return rsm_protocol::BUSY;
+     return fab_protocol::BUSY;
   }
   if (stf && last != last_myvs) 
     r.state = stf->marshal_state();
@@ -521,11 +522,11 @@ rsm_protocol::transferres &r)
   * RPC handler: Inform the local node (the primary) that node m has synchronized
   * for view vid
   */
-rsm_protocol::status
-rsm::transferdonereq(std::string m, unsigned vid, int &)
+fab_protocol::status
+fab::transferdonereq(std::string m, unsigned vid, int &)
 {
-  int ret = rsm_protocol::OK;
-  ScopedLock ml(&rsm_mutex);
+  int ret = fab_protocol::OK;
+  ScopedLock ml(&fab_mutex);
   // You fill this in for Lab 7
   // - Return BUSY if I am not insync, or if the slave is not synchronizing
   //   for the same view with me
@@ -533,7 +534,7 @@ rsm::transferdonereq(std::string m, unsigned vid, int &)
   // - Wake up recovery thread if all backups are synchronized
 
   if (!insync || vid != vid_insync) {
-    ret = rsm_protocol::BUSY;
+    ret = fab_protocol::BUSY;
   } else {
     backups.erase(m);
     if (backups.empty()) {
@@ -543,15 +544,15 @@ rsm::transferdonereq(std::string m, unsigned vid, int &)
   return ret;
 }
 
-// a node that wants to join an RSM as a server sends a
-// joinreq to the RSM's current primary; this is the
+// a node that wants to join an fab as a server sends a
+// joinreq to the fab's current primary; this is the
 // handler for that RPC.
-rsm_protocol::status
-rsm::joinreq(std::string m, viewstamp last, rsm_protocol::joinres &r)
+fab_protocol::status
+fab::joinreq(std::string m, viewstamp last, fab_protocol::joinres &r)
 {
-  int ret = rsm_protocol::OK;
+  int ret = fab_protocol::OK;
 
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
   tprintf("joinreq: src %s last (%d,%d) mylast (%d,%d)\n", m.c_str(), 
 	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
   if (cfg->ismember(m, vid_commit)) {
@@ -559,20 +560,20 @@ rsm::joinreq(std::string m, viewstamp last, rsm_protocol::joinres &r)
     r.log = cfg->dump();
   } else if (cfg->myaddr() != primary) {
     tprintf("joinreq: busy\n");
-    ret = rsm_protocol::BUSY;
+    ret = fab_protocol::BUSY;
   } else {
     // We cache vid_commit to avoid adding m to a view which already contains 
     // m due to race condition
     unsigned vid_cache = vid_commit;
-    VERIFY (pthread_mutex_unlock(&rsm_mutex) == 0);
+    VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
     bool succ = cfg->add(m, vid_cache);
-    VERIFY (pthread_mutex_lock(&rsm_mutex) == 0);
+    VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
     if (cfg->ismember(m, cfg->vid())) {
       r.log = cfg->dump();
       tprintf("joinreq: ret %d log %s\n:", ret, r.log.c_str());
     } else {
       tprintf("joinreq: failed; proposer couldn't add %d\n", succ);
-      ret = rsm_protocol::BUSY;
+      ret = fab_protocol::BUSY;
     }
   }
   return ret;
@@ -583,24 +584,24 @@ rsm::joinreq(std::string m, viewstamp last, rsm_protocol::joinres &r)
  * so the client can switch to a different primary 
  * when it existing primary fails
  */
-rsm_client_protocol::status
-rsm::client_members(int i, std::vector<std::string> &r)
+fab_client_protocol::status
+fab::client_members(int i, std::vector<std::string> &r)
 {
   std::vector<std::string> m;
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
   m = cfg->get_view(vid_commit);
   m.push_back(primary);
   r = m;
-  tprintf("rsm::client_members return %s m %s\n", print_members(m).c_str(),
+  tprintf("fab::client_members return %s m %s\n", print_members(m).c_str(),
 	 primary.c_str());
-  return rsm_client_protocol::OK;
+  return fab_client_protocol::OK;
 }
 
 // if primary is member of new view, that node is primary
 // otherwise, the lowest number node of the previous view.
-// caller should hold rsm_mutex
+// caller should hold fab_mutex
 void
-rsm::set_primary(unsigned vid)
+fab::set_primary(unsigned vid)
 {
   std::vector<std::string> c = cfg->get_view(vid);
   std::vector<std::string> p = cfg->get_view(vid - 1);
@@ -623,9 +624,9 @@ rsm::set_primary(unsigned vid)
 }
 
 bool
-rsm::amiprimary()
+fab::amiprimary()
 {
-  ScopedLock ml(&rsm_mutex);
+  ScopedLock ml(&fab_mutex);
   return primary == cfg->myaddr() && !inviewchange;
 }
 
@@ -634,27 +635,27 @@ rsm::amiprimary()
 
 // Simulate partitions
 
-// assumes caller holds rsm_mutex
+// assumes caller holds fab_mutex
 void
-rsm::net_repair_wo(bool heal)
+fab::net_repair_wo(bool heal)
 {
   std::vector<std::string> m;
   m = cfg->get_view(vid_commit);
   for (unsigned i  = 0; i < m.size(); i++) {
     if (m[i] != cfg->myaddr()) {
         handle h(m[i]);
-	tprintf("rsm::net_repair_wo: %s %d\n", m[i].c_str(), heal);
+	tprintf("fab::net_repair_wo: %s %d\n", m[i].c_str(), heal);
 	if (h.safebind()) h.safebind()->set_reachable(heal);
     }
   }
-  rsmrpc->set_reachable(heal);
+  fabrpc->set_reachable(heal);
 }
 
-rsm_test_protocol::status 
-rsm::test_net_repairreq(int heal, int &r)
+fab_test_protocol::status 
+fab::test_net_repairreq(int heal, int &r)
 {
-  ScopedLock ml(&rsm_mutex);
-  tprintf("rsm::test_net_repairreq: %d (dopartition %d, partitioned %d)\n", 
+  ScopedLock ml(&fab_mutex);
+  tprintf("fab::test_net_repairreq: %d (dopartition %d, partitioned %d)\n", 
 	 heal, dopartition, partitioned);
   if (heal) {
     net_repair_wo(heal);
@@ -663,32 +664,32 @@ rsm::test_net_repairreq(int heal, int &r)
     dopartition = true;
     partitioned = false;
   }
-  r = rsm_test_protocol::OK;
+  r = fab_test_protocol::OK;
   return r;
 }
 
 // simulate failure at breakpoint 1 and 2
 
 void 
-rsm::breakpoint1()
+fab::breakpoint1()
 {
   if (break1) {
-    tprintf("Dying at breakpoint 1 in rsm!\n");
+    tprintf("Dying at breakpoint 1 in fab!\n");
     exit(1);
   }
 }
 
 void 
-rsm::breakpoint2()
+fab::breakpoint2()
 {
   if (break2) {
-    tprintf("Dying at breakpoint 2 in rsm!\n");
+    tprintf("Dying at breakpoint 2 in fab!\n");
     exit(1);
   }
 }
 
 void 
-rsm::partition1()
+fab::partition1()
 {
   if (dopartition) {
     net_repair_wo(false);
@@ -697,16 +698,16 @@ rsm::partition1()
   }
 }
 
-rsm_test_protocol::status
-rsm::breakpointreq(int b, int &r)
+fab_test_protocol::status
+fab::breakpointreq(int b, int &r)
 {
-  r = rsm_test_protocol::OK;
-  ScopedLock ml(&rsm_mutex);
-  tprintf("rsm::breakpointreq: %d\n", b);
+  r = fab_test_protocol::OK;
+  ScopedLock ml(&fab_mutex);
+  tprintf("fab::breakpointreq: %d\n", b);
   if (b == 1) break1 = true;
   else if (b == 2) break2 = true;
   else if (b == 3 || b == 4) cfg->breakpoint(b);
-  else r = rsm_test_protocol::ERR;
+  else r = fab_test_protocol::ERR;
   return r;
 }
 
