@@ -1,4 +1,4 @@
-LAB=7
+LAB=8
 SOL=0
 RPC=./rpc
 LAB2GE=$(shell expr $(LAB) \>\= 2)
@@ -7,6 +7,7 @@ LAB4GE=$(shell expr $(LAB) \>\= 4)
 LAB5GE=$(shell expr $(LAB) \>\= 5)
 LAB6GE=$(shell expr $(LAB) \>\= 6)
 LAB7GE=$(shell expr $(LAB) \>\= 7)
+LAB8GE=$(shell expr $(LAB) \>\= 8)
 CXXFLAGS =  -g -MMD -Wall -I. -I$(RPC) -DLAB=$(LAB) -DSOL=$(SOL) -D_FILE_OFFSET_BITS=64
 FUSEFLAGS= -D_FILE_OFFSET_BITS=64 -DFUSE_USE_VERSION=25 -I/usr/local/include/fuse -I/usr/include/fuse
 ifeq ($(shell uname -s),Darwin)
@@ -41,6 +42,7 @@ lab4: yfs_client extent_server lock_server lock_tester test-lab-3-b\
 lab5: yfs_client extent_server lock_server test-lab-3-b test-lab-3-c
 lab6: lock_server rsm_tester
 lab7: lock_tester lock_server rsm_tester
+lab8: lock_server extent_server yfs_client test-lab-3-b test-lab-3-c 
 
 hfiles1=rpc/fifo.h rpc/connection.h rpc/rpc.h rpc/marshall.h rpc/method_thread.h\
 	rpc/thr_pool.h rpc/pollmgr.h rpc/jsl_log.h rpc/slock.h rpc/rpctest.cc\
@@ -51,6 +53,7 @@ hfiles3=lock_client_cache.h lock_server_cache.h handle.h tprintf.h
 hfiles4=log.h rsm.h rsm_protocol.h config.h paxos.h paxos_protocol.h rsm_state_transfer.h rsmtest_client.h tprintf.h
 hfiles5=rsm_state_transfer.h rsm_client.h
 rsm_files = rsm.cc paxos.cc config.cc log.cc handle.cc
+fab_files = fab.cc paxos.cc config.cc log.cc handle.cc
 
 rpclib=rpc/rpc.cc rpc/connection.cc rpc/pollmgr.cc rpc/thr_pool.cc rpc/jsl_log.cc gettime.cc
 rpc/librpc.a: $(patsubst %.cc,%.o,$(rpclib))
@@ -93,12 +96,18 @@ endif
 ifeq ($(LAB7GE),1)
   yfs_client += rsm_client.cc lock_client_cache_rsm.cc
 endif
+ifeq ($(LAB8GE),1)
+  yfs_client += fab_client.cc
+endif
 ifeq ($(LAB4GE),1)
   yfs_client += lock_client_cache.cc
 endif
 yfs_client : $(patsubst %.cc,%.o,$(yfs_client)) rpc/librpc.a
 
 extent_server=extent_server.cc extent_smain.cc
+ifeq ($(LAB8GE),1)
+  extent_server += $(fab_files) 
+endif
 extent_server : $(patsubst %.cc,%.o,$(extent_server)) rpc/librpc.a
 
 test-lab-3-b=test-lab-3-b.c
