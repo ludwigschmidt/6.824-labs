@@ -94,7 +94,7 @@ ifeq ($(LAB3GE),1)
   yfs_client += lock_client.cc
 endif
 ifeq ($(LAB7GE),1)
-  yfs_client += rsm_client.cc lock_client_cache_rsm.cc
+  yfs_client += handle.cc rsm_client.cc lock_client_cache_rsm.cc
 endif
 ifeq ($(LAB8GE),1)
   yfs_client += fab_client.cc
