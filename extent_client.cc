@@ -11,12 +11,16 @@
 
 extent_client::extent_client(std::string dst)
 {
+#ifdef FAB
+  cl = new fab_client(dst);
+#else
   sockaddr_in dstsock;
   make_sockaddr(dst.c_str(), &dstsock);
   cl = new rpcc(dstsock);
   if (cl->bind() != 0) {
     printf("extent_client: bind failed\n");
   }
+#endif
   pthread_mutex_init(&mutex, NULL);
 }
 

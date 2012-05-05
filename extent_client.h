@@ -9,6 +9,7 @@
 #include "extent_protocol.h"
 #include "lock_client_cache.h"
 #include "rpc.h"
+#include "fab_client.h"
 
 class extent_client {
  private:
@@ -24,7 +25,12 @@ class extent_client {
     bool got_data;
   };
 
+#define FAB
+#ifdef FAB
+  fab_client* cl;
+#else
   rpcc *cl;
+#endif
   pthread_mutex_t mutex;
   typedef std::map<extent_protocol::extentid_t, cache_entry> cache_t;
   typedef std::map<extent_protocol::extentid_t, cache_entry>::iterator
