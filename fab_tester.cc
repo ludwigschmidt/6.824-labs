@@ -1,5 +1,8 @@
 #include <cstdio>
+#include <string>
 #include "extent_client.h"
+
+using namespace std;
 
 int main(int argc, char* argv[]) {
 
