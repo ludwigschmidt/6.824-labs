@@ -1,34 +1,34 @@
 // replicated state machine interface.
 
-#ifndef rsm_h
-#define rsm_h
+#ifndef fab_h
+#define fab_h
 
 #include <string>
 #include <vector>
 #include <set>
-#include "rsm_protocol.h"
-#include "rsm_state_transfer.h"
+#include "fab_protocol.h"
+#include "fab_state_transfer.h"
 #include "rpc.h"
 #include <arpa/inet.h>
 #include "config.h"
 
 
-class rsm : public config_view_change {
+class fab : public config_view_change {
  private:
   void reg1(int proc, handler *);
  protected:
   std::map<int, handler *> procs;
   config *cfg;
-  class rsm_state_transfer *stf;
-  rpcs *rsmrpc;
+  class fab_state_transfer *stf;
+  rpcs *fabrpc;
   // On slave: expected viewstamp of next invoke request
-  // On primary: viewstamp for the next request from rsm_client
+  // On primary: viewstamp for the next request from fab_client
   viewstamp myvs;
   viewstamp last_myvs;   // Viewstamp of the last executed request
   std::string primary;
   bool insync; 
   bool inviewchange;
-  unsigned vid_commit;  // Latest view id that is known to rsm layer
+  unsigned vid_commit;  // Latest view id that is known to fab layer
   unsigned vid_insync;  // The view id that this node is synchronizing for
   std::set<std::string> backups;   // A list of unsynchronized backups
 
@@ -40,25 +40,25 @@ class rsm : public config_view_change {
   bool break2;
 
 
-  rsm_client_protocol::status client_members(int i, 
+  fab_client_protocol::status client_members(int i, 
 					     std::vector<std::string> &r);
-  rsm_protocol::status invoke(int proc, viewstamp vs, std::string mreq, 
+  fab_protocol::status invoke(int proc, viewstamp vs, std::string mreq, 
 			      int &dummy);
-  rsm_protocol::status transferreq(std::string src, viewstamp last, unsigned vid,
-				   rsm_protocol::transferres &r);
-  rsm_protocol::status transferdonereq(std::string m, unsigned vid, int &);
-  rsm_protocol::status joinreq(std::string src, viewstamp last, 
-			       rsm_protocol::joinres &r);
-  rsm_test_protocol::status test_net_repairreq(int heal, int &r);
-  rsm_test_protocol::status breakpointreq(int b, int &r);
+  fab_protocol::status transferreq(std::string src, viewstamp last, unsigned vid,
+				   fab_protocol::transferres &r);
+  fab_protocol::status transferdonereq(std::string m, unsigned vid, int &);
+  fab_protocol::status joinreq(std::string src, viewstamp last, 
+			       fab_protocol::joinres &r);
+  fab_test_protocol::status test_net_repairreq(int heal, int &r);
+  fab_test_protocol::status breakpointreq(int b, int &r);
 
-  pthread_mutex_t rsm_mutex;
+  pthread_mutex_t fab_mutex;
   pthread_mutex_t invoke_mutex;
   pthread_cond_t recovery_cond;
   pthread_cond_t sync_cond;
 
   void execute(int procno, std::string req, std::string &r);
-  rsm_client_protocol::status client_invoke(int procno, std::string req, 
+  fab_client_protocol::status client_invoke(int procno, std::string req, 
               std::string &r);
   bool statetransfer(std::string m);
   bool statetransferdone(std::string m);
@@ -73,11 +73,11 @@ class rsm : public config_view_change {
   void partition1();
   void commit_change_wo(unsigned vid);
  public:
-  rsm (std::string _first, std::string _me);
-  ~rsm() {};
+  fab (std::string _first, std::string _me);
+  ~fab() {};
 
   bool amiprimary();
-  void set_state_transfer(rsm_state_transfer *_stf) { stf = _stf; };
+  void set_state_transfer(fab_state_transfer *_stf) { stf = _stf; };
   void recovery();
   void commit_change(unsigned vid);
 
@@ -98,7 +98,7 @@ class rsm : public config_view_change {
 };
 
 template<class S, class A1, class R> void
-  rsm::reg(int proc, S*sob, int (S::*meth)(const A1 a1, R & r))
+  fab::reg(int proc, S*sob, int (S::*meth)(const A1 a1, R & r))
 {
   class h1 : public handler {
   private:
@@ -121,7 +121,7 @@ template<class S, class A1, class R> void
 }
 
 template<class S, class A1, class A2, class R> void
-  rsm::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, R & r))
+  fab::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, R & r))
 {
  class h1 : public handler {
   private:
@@ -146,7 +146,7 @@ template<class S, class A1, class A2, class R> void
 }
 
 template<class S, class A1, class A2, class A3, class R> void
-  rsm::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
+  fab::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
              const A3 a3, R & r))
 {
  class h1 : public handler {
@@ -174,7 +174,7 @@ template<class S, class A1, class A2, class A3, class R> void
 }
 
 template<class S, class A1, class A2, class A3, class A4, class R> void
-  rsm::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
+  fab::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
              const A3 a3, const A4 a4, R & r))
 {
  class h1 : public handler {
@@ -206,7 +206,7 @@ template<class S, class A1, class A2, class A3, class A4, class R> void
 
 
 template<class S, class A1, class A2, class A3, class A4, class A5, class R> void
-  rsm::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
+  fab::reg(int proc, S*sob, int (S::*meth)(const A1 a1, const A2 a2, 
              const A3 a3, const A4 a4, 
              const A5 a5, R & r))
 {
@@ -239,4 +239,4 @@ template<class S, class A1, class A2, class A3, class A4, class A5, class R> voi
   reg1(proc, new h1(sob, meth));
 }
 
-#endif /* rsm_h */
+#endif /* fab_h */
