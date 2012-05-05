@@ -33,6 +33,10 @@ class fab_protocol {
     transferreq,
     transferdonereq,
     joinreq,
+    put,
+    get,
+    getattr,
+    remove,
   };
 
   struct transferres {

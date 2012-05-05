@@ -11,7 +11,7 @@
 #include "rpc.h"
 #include <arpa/inet.h>
 #include "config.h"
-
+#include "extent_server.h"
 
 class fab : public config_view_change {
  private:
@@ -21,6 +21,8 @@ class fab : public config_view_change {
   config *cfg;
   class fab_state_transfer *stf;
   rpcs *fabrpc;
+	extent_server *fabes;
+	
   // On slave: expected viewstamp of next invoke request
   // On primary: viewstamp for the next request from fab_client
   viewstamp myvs;
@@ -39,7 +41,16 @@ class fab : public config_view_change {
   bool break1;
   bool break2;
 
-
+  int client_put(extent_protocol::extentid_t id, std::string, int &);
+  int client_get(extent_protocol::extentid_t id, std::string &);
+  int client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
+  int client_remove(extent_protocol::extentid_t id, int &);
+	
+  int put(extent_protocol::extentid_t id, std::string, int &);
+  int get(extent_protocol::extentid_t id, std::string &);
+  int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
+  int remove(extent_protocol::extentid_t id, int &);
+	
   fab_client_protocol::status client_members(int i, 
 					     std::vector<std::string> &r);
   fab_protocol::status invoke(int proc, viewstamp vs, std::string mreq, 

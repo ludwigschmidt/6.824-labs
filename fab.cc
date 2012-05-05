@@ -137,6 +137,18 @@ fab::fab(std::string _first, std::string _me)
       ScopedLock ml(&fab_mutex);
       VERIFY(pthread_create(&th, NULL, &recoverythread, (void *) this) == 0);
   }
+	
+  fabrpc->reg(fab_protocol::put, this, &fab::put);
+	fabrpc->reg(fab_protocol::get, this, &fab::get);
+  fabrpc->reg(fab_protocol::getattr, this, &fab::getattr);
+  fabrpc->reg(fab_protocol::remove, this, &fab::remove);
+	
+	reg(extent_protocol::get, this, &fab::client_get);
+  reg(extent_protocol::getattr, this, &fab::client_getattr);
+  reg(extent_protocol::put, this, &fab::client_put);
+  reg(extent_protocol::remove, this, &fab::client_remove);
+	
+	fabes = new extent_server();
 }
 
 void
@@ -396,11 +408,11 @@ fab::client_invoke(int procno, std::string req, std::string &r)
     // printf("returning busy because in view change\n");
     // fflush(stdout);
     ret = fab_client_protocol::BUSY;
-  } else if (primary != cfg->myaddr()) {
+  } /*else if (primary != cfg->myaddr()) {
     // printf("returning notprimary because not primary\n");
     // fflush(stdout);
     ret = fab_client_protocol::NOTPRIMARY;
-  } else {
+  } */ else {
     viewstamp cur_vs = myvs;
     last_myvs = myvs;
     ++myvs.seqno;
@@ -710,6 +722,17 @@ fab::breakpointreq(int b, int &r)
   else r = fab_test_protocol::ERR;
   return r;
 }
+
+int fab::client_put(extent_protocol::extentid_t id, std::string, int &) {return 0;}
+int fab::client_get(extent_protocol::extentid_t id, std::string &) {return 0;}
+int fab::client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
+int fab::client_remove(extent_protocol::extentid_t id, int &) {return 0;}
+
+int fab::put(extent_protocol::extentid_t id, std::string, int &) {return 0;}
+int fab::get(extent_protocol::extentid_t id, std::string &) {return 0;}
+int fab::getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
+int fab::remove(extent_protocol::extentid_t id, int &) {return 0;}
+
 
 
 
