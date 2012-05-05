@@ -11,12 +11,15 @@ main(int argc, char *argv[])
 {
   int count = 0;
 
-  if(argc != 2){
-    fprintf(stderr, "Usage: %s port\n", argv[0]);
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+
+  srandom(getpid());
+
+  if(argc != 3){
+    fprintf(stderr, "Usage: %s [master:]port [me:]port\n", argv[0]);
     exit(1);
   }
-
-  setvbuf(stdout, NULL, _IONBF, 0);
 
   char *count_env = getenv("RPC_COUNT");
   if(count_env != NULL){
