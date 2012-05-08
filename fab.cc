@@ -96,7 +96,7 @@ recoverythread(void *x)
 }
 
 fab::fab(std::string _first, std::string _me) 
-	: stf(0), primary(_first), insync (false), inviewchange (true), vid_commit(0),
+	: primary(_first), inviewchange (true), vid_commit(0),
 		partitioned (false), dopartition(false), break1(false), break2(false)
 {
 	pthread_t th;
@@ -125,7 +125,7 @@ fab::fab(std::string _first, std::string _me)
 	
 	fabrpc->reg(fab_protocol::invoke, this, &fab::invoke);
 	fabrpc->reg(fab_protocol::transferreq, this, &fab::transferreq);
-	fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
+//	fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
 	fabrpc->reg(fab_protocol::joinreq, this, &fab::joinreq);
 
 	// tester must be on different port, otherwise it may partition itself
@@ -149,6 +149,8 @@ fab::fab(std::string _first, std::string _me)
 	reg(extent_protocol::remove, this, &fab::client_remove);
 	
 	fabes = new extent_server();
+
+  state.server_to_extent_map.insert(std::make_pair(_me, extent_set()));
 }
 
 void
@@ -162,12 +164,15 @@ fab::reg1(int proc, handler *h)
 void
 fab::recovery()
 {
-	bool r = true;
+	//bool r = true;
 	ScopedLock ml(&fab_mutex);
+
+  bool state_synced = true;
 
 	while (1) {
 		while (!cfg->ismember(cfg->myaddr(), vid_commit)) {
 			if (join(primary)) {
+        state_synced = false;
 				tprintf("recovery: joined\n");
 				commit_change_wo(cfg->vid());
 			} else {
@@ -176,31 +181,46 @@ fab::recovery()
 				VERIFY(pthread_mutex_lock(&fab_mutex)==0);
 			}
 		}
+
 		vid_insync = vid_commit;
-		tprintf("recovery: sync vid_insync %d\n", vid_insync);
-		if (primary == cfg->myaddr()) {
-			r = sync_with_backups();
-		} else {
-			r = sync_with_primary();
-		}
-		tprintf("recovery: sync done\n");
+    if (!state_synced) {
+      tprintf("recovery: sync vid_insync %d\n", vid_insync);
+      /*if (primary == cfg->myaddr()) {
+        r = sync_with_backups();
+      } else {
+        r = sync_with_primary();
+      }*/
+      if (sync_with_primary()) {
+        state_synced = true;
+
+        printf("synced state, current server_to_extent_map:\n");
+        for (server_to_extent_map_t::iterator iter =
+            state.server_to_extent_map.begin();
+            iter != state.server_to_extent_map.end(); ++iter) {
+          printf("  %s has %d extents\n", iter->first.c_str(),
+              static_cast<int>(iter->second.size()));
+        }
+
+      }
+      tprintf("recovery: sync done\n");
+    }
 
 		// If there was a commited viewchange during the synchronization, restart
 		// the recovery
-		if (vid_insync != vid_commit)
+		if (vid_insync != vid_commit || !state_synced)
 			continue;
 
-		if (r) { 
+		//if (r) { 
 			myvs.vid = vid_commit;
 			myvs.seqno = 1;
 			inviewchange = false;
-		}
-		tprintf("recovery: go to sleep %d %d\n", insync, inviewchange);
+		//}
+		tprintf("recovery: go to sleep %d\n", inviewchange);
 		pthread_cond_wait(&recovery_cond, &fab_mutex);
 	}
 }
 
-bool
+/*bool
 fab::sync_with_backups()
 {
 	pthread_mutex_unlock(&fab_mutex);
@@ -235,14 +255,23 @@ fab::sync_with_backups()
 
 	insync = false;
 	return backups.empty() && vid_insync == vid_commit;
-}
+}*/
 
 
 bool
 fab::sync_with_primary()
 {
 	// Remember the primary of vid_insync
-	std::string m = primary;
+	//std::string m = primary;
+	std::vector<std::string> members = cfg->get_view(vid_insync);
+  std::string sync_target = "";
+  for (unsigned int ii = 0; ii < members.size(); ++ii) {
+    if (members[ii] != cfg->myaddr()) {
+      sync_target = members[ii];
+      break;
+    }
+  }
+
 	// You fill this in for Lab 7
 	// Keep synchronizing with primary until the synchronization succeeds,
 	// or there is a commited viewchange
@@ -250,15 +279,15 @@ fab::sync_with_primary()
 	bool sync_success = false;
 
 	while (vid_insync == vid_commit && !sync_success) {
-		sync_success = statetransfer(m);
+		sync_success = statetransfer(sync_target);
 	}
 
-	bool notify_success = false;
+	/*bool notify_success = false;
 	if (sync_success) {
 		notify_success = statetransferdone(m);
-	}
+	}*/
 
-	return sync_success && notify_success && vid_insync == vid_commit;
+	return sync_success /*&& notify_success*/ && vid_insync == vid_commit;
 }
 
 
@@ -286,8 +315,8 @@ fab::statetransfer(std::string m)
 		 (long unsigned) cl, ret);
 		return false;
 	}
-	if (stf && last_myvs != r.last) {
-		stf->unmarshal_state(r.state);
+	if (last_myvs != r.last) {
+		unmarshal_state(r.state);
 	}
 	last_myvs = r.last;
 	tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
@@ -295,7 +324,7 @@ fab::statetransfer(std::string m)
 	return true;
 }
 
-bool
+/*bool
 fab::statetransferdone(std::string m) {
 	// You fill this in for Lab 7
 	// - Inform primary that this slave has synchronized for vid_insync
@@ -313,7 +342,7 @@ fab::statetransferdone(std::string m) {
 	VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
 
 	return cl != NULL && ret == fab_protocol::OK;
-}
+}*/
 
 
 bool
@@ -358,11 +387,36 @@ fab::commit_change_wo(unsigned vid)
 {
 	if (vid <= vid_commit)
 		return;
-	tprintf("commit_change: new view (%d)  last vs (%d,%d) %s insync %d\n", 
-	 vid, last_myvs.vid, last_myvs.seqno, primary.c_str(), insync);
+	tprintf("commit_change: new view (%d)  last vs (%d,%d) %s\n", 
+	 vid, last_myvs.vid, last_myvs.seqno, primary.c_str());
 	vid_commit = vid;
 	inviewchange = true;
 	set_primary(vid);
+
+  // adds new servers to the global state
+  std::vector<std::string> members = cfg->get_view(vid);
+  for (unsigned int ii = 0; ii < members.size(); ++ii) {
+    std::string cur_member = members[ii];
+    if (state.server_to_extent_map.find(cur_member) ==
+        state.server_to_extent_map.end()) {
+      state.server_to_extent_map.insert(std::make_pair(cur_member,
+          extent_set()));
+    }
+  }
+  // removes dead servers from the global state
+  // we still need to reallocate their extents
+  for (server_to_extent_map_t::iterator iter =
+      state.server_to_extent_map.begin();
+      iter != state.server_to_extent_map.end(); ) {
+    if (!isamember(iter->first, members)) {
+      server_to_extent_map_t::iterator to_delete = iter;
+      ++iter;
+      state.server_to_extent_map.erase(to_delete);
+    } else {
+      ++iter;
+    }
+  }
+
 	pthread_cond_signal(&recovery_cond);
 	if (cfg->ismember(cfg->myaddr(), vid_commit))
 		breakpoint2();
@@ -521,11 +575,11 @@ fab_protocol::transferres &r)
 	// Code will be provided in Lab 7
 	tprintf("transferreq from %s (%d,%d) vs (%d,%d)\n", src.c_str(), 
 	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
-	if (!insync || vid != vid_insync) {
+	if (vid != vid_insync) {
 		 return fab_protocol::BUSY;
 	}
-	if (stf && last != last_myvs) 
-		r.state = stf->marshal_state();
+	if (last != last_myvs) 
+		r.state = marshal_state();
 	r.last = last_myvs;
 	return ret;
 }
@@ -533,7 +587,6 @@ fab_protocol::transferres &r)
 /**
 	* RPC handler: Inform the local node (the primary) that node m has synchronized
 	* for view vid
-	*/
 fab_protocol::status
 fab::transferdonereq(std::string m, unsigned vid, int &)
 {
@@ -555,6 +608,7 @@ fab::transferdonereq(std::string m, unsigned vid, int &)
 	}
 	return ret;
 }
+	*/
 
 // a node that wants to join an fab as a server sends a
 // joinreq to the fab's current primary; this is the
@@ -570,9 +624,9 @@ fab::joinreq(std::string m, viewstamp last, fab_protocol::joinres &r)
 	if (cfg->ismember(m, vid_commit)) {
 		tprintf("joinreq: is still a member\n");
 		r.log = cfg->dump();
-	} else if (cfg->myaddr() != primary) {
+/*	} else if (cfg->myaddr() != primary) {
 		tprintf("joinreq: busy\n");
-		ret = fab_protocol::BUSY;
+		ret = fab_protocol::BUSY;*/
 	} else {
 		// We cache vid_commit to avoid adding m to a view which already contains 
 		// m due to race condition
@@ -736,7 +790,29 @@ int fab::get(extent_protocol::extentid_t id, std::string &) {return 0;}
 int fab::getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
 int fab::remove(extent_protocol::extentid_t id, int &) {return 0;}
 
+std::string
+fab::marshal_state()
+{
+  marshall rep;
+  rep << state;
+  return rep.str();
+}
 
+void
+fab::unmarshal_state(std::string state)
+{
+  unmarshall rep(state);
+  rep >> state;
+}
 
+marshall& operator <<(marshall& m, const fab::global_state& g) {
+  m << g.server_to_extent_map;
+  m << g.extent_to_server_map;
+  return m;
+}
 
-
+unmarshall& operator >>(unmarshall& m, fab::global_state& g) {
+  m >> g.server_to_extent_map;
+  m >> g.extent_to_server_map;
+  return m;
+}
