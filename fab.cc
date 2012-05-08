@@ -467,60 +467,11 @@ fab::client_invoke(int procno, std::string req, std::string &r)
 		// fflush(stdout);
 		ret = fab_client_protocol::NOTPRIMARY;
 	} */ else {
-		viewstamp cur_vs = myvs;
-		last_myvs = myvs;
-		++myvs.seqno;
 
 		// printf("in client_invoke %d before getview\n", procno);
 		// fflush(stdout);
 
-		bool all_ok = true;
-		std::vector<std::string> cur_view = cfg->get_view(vid_commit);
-
-		// printf("in client_invoke %d before loop\n", procno);
-		// fflush(stdout);
-
-		bool first_replica = true;
-		for (unsigned int ii = 0; ii < cur_view.size() && all_ok; ++ii) {
-			const std::string& cur_replica = cur_view[ii];
-			if (cur_replica != primary) {
-
-				VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
-
-				fab_protocol::status ret;
-				handle h(cur_replica);
-				rpcc *cl = h.safebind();
-
-				if (cl != NULL) {
-					int dummy;
-					ret = handle(cur_replica).safebind()->call(fab_protocol::invoke,
-							procno, cur_vs, req, dummy, rpcc::to(1000));
-				}
-
-				VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
-
-				if (cl == NULL || ret != fab_protocol::OK) {
-					// printf("setting allok false because of replica %s\n",
-					//    cur_replica.c_str());
-					// fflush(stdout);
-					all_ok = false;
-				}
-
-				if (first_replica) {
-					breakpoint1();
-					first_replica = false;
-					partition1();
-				}
-			}
-		}
-
-		if (all_ok) {
-			execute(procno, req, r);
-		} else {
-			// printf("returning busy because not all ok\n");
-			// fflush(stdout);
-			ret = fab_client_protocol::BUSY;
-		}
+		execute(procno, req, r);
 	}
 
 	pthread_mutex_unlock(&fab_mutex);
