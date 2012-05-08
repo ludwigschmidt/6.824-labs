@@ -15,9 +15,11 @@ echo "starting ./fab_server $FAB1 $FAB1 > fab1.log 2>&1 &"
 ./fab_server $FAB1 $FAB1 > fab1.log 2>&1 &
 
 echo "starting ./fab_server $FAB1 $FAB2 > fab3.log 2>&1 &"
-./fab_server $FAB1 $FAB2 > fab1.log 2>&1 &
+./fab_server $FAB1 $FAB2 > fab2.log 2>&1 &
 
 echo "starting ./fab_server $FAB1 $FAB3 > fab3.log 2>&1 &"
-./fab_server $FAB1 $FAB3 > fab1.log 2>&1 &
+./fab_server $FAB1 $FAB3 > fab3.log 2>&1 &
 
-watch -n1 "tail -n 50 fab1.log"
+#watch -n1 "tail -n 50 fab1.log"
+
+echo "started fab servers $FAB1, $FAB2 and $FAB3"
