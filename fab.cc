@@ -80,6 +80,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "handle.h"
 #include "fab.h"
@@ -362,12 +363,26 @@ fab::commit_change_wo(unsigned vid)
 	 vid, last_myvs.vid, last_myvs.seqno, primary.c_str(), insync);
 	vid_commit = vid;
 	inviewchange = true;
-	set_primary(vid);
-	pthread_cond_signal(&recovery_cond);
-	if (cfg->ismember(cfg->myaddr(), vid_commit))
-		breakpoint2();
+
+	if ( !cfg->has_metadata(vid) ) {
+		set_primary(vid);
+		pthread_cond_signal(&recovery_cond);
+		if (cfg->ismember(cfg->myaddr(), vid_commit))
+			breakpoint2();
+	}
+	else {
+		// Metadata
+		std::string metadata = cfg->get_metadata(vid);
+		update_metadata(metadata);
+		pthread_cond_signal(&recovery_cond);
+	}
 }
 
+void
+fab::update_metadata(std::string metadata)
+{
+	printf("META: %s\n", metadata.c_str());
+}
 
 void
 fab::execute(int procno, std::string req, std::string &r)

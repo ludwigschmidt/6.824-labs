@@ -1,6 +1,7 @@
 #include <sstream>
 #include <iostream>
 #include <stdio.h>
+#include <list>
 #include "config.h"
 #include "paxos.h"
 #include "handle.h"
@@ -104,6 +105,7 @@ config::members(std::string value)
   std::string m;
   std::vector<std::string> view;
   while (ist >> m) {
+    if (m == ";") break;
     view.push_back(m);
   }
   return view;
@@ -328,5 +330,67 @@ config::doheartbeat(std::string m)
   }
   tprintf("doheartbeat done %d\n", res);
   return res;
+}
+
+bool config::propose_metadata(std::string m, unsigned vid)
+{
+  bool r = true;
+
+  ScopedLock ml(&cfg_mutex);
+  if (vid != myvid)
+    return false;
+  printf("propose_metadata: %s\n", m.c_str());
+
+  // Add header
+  m = value(mems) + std::string("; ") + m;
+  
+  std::vector<std::string> curm = mems;
+  int nextvid = myvid + 1;
+
+  VERIFY(pthread_mutex_unlock(&cfg_mutex)==0);
+  r = pro->run(nextvid, curm, m);
+  VERIFY(pthread_mutex_lock(&cfg_mutex)==0);
+
+  if (r) {
+    printf("propose_metadata: agreement\n");
+  }
+  else {
+    printf("propose_metadata: could not agree on metadata\n");
+  }
+  return r;
+}
+
+std::list<std::string> &
+split(const std::string &s, char delim, std::list<std::string> &elems) {
+  std::stringstream ss(s);
+  std::string item;
+  while(std::getline(ss, item, delim)) {
+    elems.push_back(item);
+  }
+  return elems;
+}
+
+std::list<std::string>
+split(const std::string &s, char delim) {
+  std::list<std::string> elems;
+  return split(s, delim, elems);
+}
+
+bool
+config::has_metadata(unsigned vid)
+{
+  VERIFY(split(acc->value(vid), ';').size() <= 2);
+  return split(acc->value(vid), ';').size() == 2;
+}
+
+std::string
+config::get_metadata(unsigned vid)
+{
+  std::string value = acc->value(vid);
+  VERIFY(split(acc->value(vid), ';').size() == 2);
+  std::list<std::string> values = split(acc->value(vid), ';');
+  values.pop_front();
+  std::string metadata = values.front();
+  return metadata;
 }
 
