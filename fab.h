@@ -13,13 +13,37 @@
 #include "config.h"
 #include "extent_server.h"
 
-class fab : public config_view_change {
+class fab : public config_view_change, public fab_state_transfer {
+ public:
+  typedef std::set<extent_protocol::extentid_t> extent_set;
+  typedef std::set<std::string> server_set;
+  typedef std::map<std::string, extent_set> server_to_extent_map_t;
+  typedef std::map<extent_protocol::extentid_t, server_set>
+      extent_to_server_map_t;
+
+  struct global_state {
+    server_to_extent_map_t server_to_extent_map;
+    extent_to_server_map_t extent_to_server_map;
+  };
+
  private:
   void reg1(int proc, handler *);
+
+  global_state state;
+
+  struct extent_timestamps {
+    fab_protocol::timestamp valTs;
+    fab_protocol::timestamp ordTs;
+  };
+  typedef std::map<extent_protocol::extentid_t, extent_timestamps>
+      timestamp_map_t;
+
+  timestamp_map_t timestamp_map;
+
+
  protected:
   std::map<int, handler *> procs;
   config *cfg;
-  class fab_state_transfer *stf;
   rpcs *fabrpc;
 	extent_server *fabes;
 	
@@ -28,7 +52,7 @@ class fab : public config_view_change {
   viewstamp myvs;
   viewstamp last_myvs;   // Viewstamp of the last executed request
   std::string primary;
-  bool insync; 
+  //bool insync; 
   bool inviewchange;
   unsigned vid_commit;  // Latest view id that is known to fab layer
   unsigned vid_insync;  // The view id that this node is synchronizing for
@@ -41,15 +65,19 @@ class fab : public config_view_change {
   bool break1;
   bool break2;
 
-  int client_put(extent_protocol::extentid_t id, std::string, int &);
+  int client_put(extent_protocol::extentid_t id, std::string val, int& r);
   int client_get(extent_protocol::extentid_t id, std::string &);
   int client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
-  int client_remove(extent_protocol::extentid_t id, int &);
+  int client_remove(extent_protocol::extentid_t id, int& r);
 	
-  int put(extent_protocol::extentid_t id, std::string, int &);
-  int get(extent_protocol::extentid_t id, std::string &);
-  int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
-  int remove(extent_protocol::extentid_t id, int &);
+  int put(extent_protocol::extentid_t id, std::string val,
+      fab_protocol::timestamp ts, int& status);
+  int get(extent_protocol::extentid_t id, fab_protocol::fabresult& result);
+  int getattr(extent_protocol::extentid_t id, fab_protocol::fabresult& result);
+  int remove(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+      int& status);
+  int order(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+      bool return_value, fab_protocol::fabresult& result);
 	
   fab_client_protocol::status client_members(int i, 
 					     std::vector<std::string> &r);
@@ -72,11 +100,11 @@ class fab : public config_view_change {
   fab_client_protocol::status client_invoke(int procno, std::string req, 
               std::string &r);
   bool statetransfer(std::string m);
-  bool statetransferdone(std::string m);
+  //bool statetransferdone(std::string m);
   bool join(std::string m);
   void set_primary(unsigned vid);
   std::string find_highest(viewstamp &vs, std::string &m, unsigned &vid);
-  bool sync_with_backups();
+  //bool sync_with_backups();
   bool sync_with_primary();
   void net_repair_wo(bool heal);
   void breakpoint1();
@@ -88,8 +116,10 @@ class fab : public config_view_change {
   fab (std::string _first, std::string _me);
   ~fab() {};
 
+  std::string marshal_state();
+  void unmarshal_state(std::string state);
+
   bool amiprimary();
-  void set_state_transfer(fab_state_transfer *_stf) { stf = _stf; };
   void recovery();
   void commit_change(unsigned vid);
 
@@ -250,5 +280,32 @@ template<class S, class A1, class A2, class A3, class A4, class A5, class R> voi
   };
   reg1(proc, new h1(sob, meth));
 }
+
+template <class C> marshall &
+operator<<(marshall &m, std::set<C> s)
+{
+	m << (unsigned int) s.size();
+	for (typename std::set<C>::const_iterator iter = s.begin();
+      iter != s.end(); ++iter) {
+    m << *iter;
+  }
+	return m;
+}
+
+template <class C> unmarshall &
+operator>>(unmarshall &u, std::set<C> &s)
+{
+	unsigned n;
+	u >> n;
+	for(unsigned i = 0; i < n; i++){
+		C z;
+		u >> z;
+		s.insert(z);
+	}
+	return u;
+}
+
+marshall& operator <<(marshall& m, const fab::global_state& g);
+unmarshall& operator >>(unmarshall& m, fab::global_state& g);
 
 #endif /* fab_h */

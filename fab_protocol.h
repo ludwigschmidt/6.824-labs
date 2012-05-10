@@ -2,6 +2,7 @@
 #define fab_protocol_h
 
 #include "rpc.h"
+#include "extent_protocol.h"
 
 
 class fab_client_protocol {
@@ -37,7 +38,23 @@ class fab_protocol {
     get,
     getattr,
     remove,
+    order,
   };
+
+  enum fab_status {
+    INTERNAL_OK,
+    INTERNAL_OLD,
+    INTERNAL_ERR,
+  };
+
+  typedef long long unsigned int timestamp;
+  static timestamp get_current_timestamp() {
+    long long ret = 0;
+    timeval tv;
+    gettimeofday(&tv, 0);
+    ret = tv.tv_sec * 1000000LL + tv.tv_usec;
+    return ret;
+  }
 
   struct transferres {
     std::string state;
@@ -47,6 +64,14 @@ class fab_protocol {
   struct joinres {
     std::string log;
   };
+
+  struct fabresult {
+    std::string val;
+    int status;
+    timestamp ts;
+    extent_protocol::attr attr;
+  };
+
 };
 
 inline bool operator==(viewstamp a, viewstamp b) {
@@ -59,6 +84,22 @@ inline bool operator>(viewstamp a, viewstamp b) {
 
 inline bool operator!=(viewstamp a, viewstamp b) {
   return a.vid != b.vid || a.seqno != b.seqno;
+}
+
+inline marshall& operator<<(marshall &m, fab_protocol::fabresult f) {
+  m << f.val;
+  m << f.status;
+  m << f.attr;
+  m << f.ts;
+  return m;
+}
+
+inline unmarshall& operator>>(unmarshall& u, fab_protocol::fabresult& f) {
+  u >> f.val;
+  u >> f.status;
+  u >> f.attr;
+  u >> f.ts;
+  return u;
 }
 
 inline marshall& operator<<(marshall &m, viewstamp v)

@@ -97,7 +97,7 @@ recoverythread(void *x)
 }
 
 fab::fab(std::string _first, std::string _me) 
-	: stf(0), primary(_first), insync (false), inviewchange (true), vid_commit(0),
+	: primary(_first), inviewchange (true), vid_commit(0),
 		partitioned (false), dopartition(false), break1(false), break2(false)
 {
 	pthread_t th;
@@ -126,7 +126,7 @@ fab::fab(std::string _first, std::string _me)
 	
 	fabrpc->reg(fab_protocol::invoke, this, &fab::invoke);
 	fabrpc->reg(fab_protocol::transferreq, this, &fab::transferreq);
-	fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
+//	fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
 	fabrpc->reg(fab_protocol::joinreq, this, &fab::joinreq);
 
 	// tester must be on different port, otherwise it may partition itself
@@ -143,6 +143,7 @@ fab::fab(std::string _first, std::string _me)
 	fabrpc->reg(fab_protocol::get, this, &fab::get);
 	fabrpc->reg(fab_protocol::getattr, this, &fab::getattr);
 	fabrpc->reg(fab_protocol::remove, this, &fab::remove);
+	fabrpc->reg(fab_protocol::order, this, &fab::order);
 	
 	reg(extent_protocol::get, this, &fab::client_get);
 	reg(extent_protocol::getattr, this, &fab::client_getattr);
@@ -150,6 +151,17 @@ fab::fab(std::string _first, std::string _me)
 	reg(extent_protocol::remove, this, &fab::client_remove);
 	
 	fabes = new extent_server();
+
+  state.server_to_extent_map.insert(std::make_pair(_me, extent_set()));
+
+  // TEST CODE
+  state.server_to_extent_map[_me].insert(10);
+  server_set tmpset;
+  tmpset.insert(_me);
+  state.extent_to_server_map.insert(std::make_pair(10, tmpset));
+  timestamp_map[10].valTs = 0;
+  timestamp_map[10].ordTs = 0;
+  // TEST CODE END
 }
 
 void
@@ -163,12 +175,15 @@ fab::reg1(int proc, handler *h)
 void
 fab::recovery()
 {
-	bool r = true;
+	//bool r = true;
 	ScopedLock ml(&fab_mutex);
+
+  bool state_synced = true;
 
 	while (1) {
 		while (!cfg->ismember(cfg->myaddr(), vid_commit)) {
 			if (join(primary)) {
+        state_synced = false;
 				tprintf("recovery: joined\n");
 				commit_change_wo(cfg->vid());
 			} else {
@@ -177,31 +192,57 @@ fab::recovery()
 				VERIFY(pthread_mutex_lock(&fab_mutex)==0);
 			}
 		}
+
 		vid_insync = vid_commit;
-		tprintf("recovery: sync vid_insync %d\n", vid_insync);
-		if (primary == cfg->myaddr()) {
-			r = sync_with_backups();
-		} else {
-			r = sync_with_primary();
-		}
-		tprintf("recovery: sync done\n");
+    if (!state_synced) {
+      tprintf("recovery: sync vid_insync %d\n", vid_insync);
+      /*if (primary == cfg->myaddr()) {
+        r = sync_with_backups();
+      } else {
+        r = sync_with_primary();
+      }*/
+      if (sync_with_primary()) {
+        state_synced = true;
+
+        printf("synced state, current server_to_extent_map:\n");
+        for (server_to_extent_map_t::iterator iter =
+            state.server_to_extent_map.begin();
+            iter != state.server_to_extent_map.end(); ++iter) {
+          printf("  %s has %d extents\n", iter->first.c_str(),
+              static_cast<int>(iter->second.size()));
+        }
+        printf("current extent_to_server_map:\n");
+        for (extent_to_server_map_t::iterator iter =
+            state.extent_to_server_map.begin();
+            iter != state.extent_to_server_map.end(); ++iter) {
+          printf("extent %lld:", iter->first);
+          for (server_set::iterator iter2 = iter->second.begin();
+              iter2 != iter->second.end(); ++iter2) {
+            printf(" %s", iter2->c_str());
+          }
+          printf("\n");
+        }
+
+      }
+      tprintf("recovery: sync done\n");
+    }
 
 		// If there was a commited viewchange during the synchronization, restart
 		// the recovery
-		if (vid_insync != vid_commit)
+		if (vid_insync != vid_commit || !state_synced)
 			continue;
 
-		if (r) { 
+		//if (r) { 
 			myvs.vid = vid_commit;
 			myvs.seqno = 1;
 			inviewchange = false;
-		}
-		tprintf("recovery: go to sleep %d %d\n", insync, inviewchange);
+		//}
+		tprintf("recovery: go to sleep %d\n", inviewchange);
 		pthread_cond_wait(&recovery_cond, &fab_mutex);
 	}
 }
 
-bool
+/*bool
 fab::sync_with_backups()
 {
 	pthread_mutex_unlock(&fab_mutex);
@@ -236,14 +277,23 @@ fab::sync_with_backups()
 
 	insync = false;
 	return backups.empty() && vid_insync == vid_commit;
-}
+}*/
 
 
 bool
 fab::sync_with_primary()
 {
 	// Remember the primary of vid_insync
-	std::string m = primary;
+	//std::string m = primary;
+	std::vector<std::string> members = cfg->get_view(vid_insync);
+  std::string sync_target = "";
+  for (unsigned int ii = 0; ii < members.size(); ++ii) {
+    if (members[ii] != cfg->myaddr()) {
+      sync_target = members[ii];
+      break;
+    }
+  }
+
 	// You fill this in for Lab 7
 	// Keep synchronizing with primary until the synchronization succeeds,
 	// or there is a commited viewchange
@@ -251,15 +301,15 @@ fab::sync_with_primary()
 	bool sync_success = false;
 
 	while (vid_insync == vid_commit && !sync_success) {
-		sync_success = statetransfer(m);
+		sync_success = statetransfer(sync_target);
 	}
 
-	bool notify_success = false;
+	/*bool notify_success = false;
 	if (sync_success) {
 		notify_success = statetransferdone(m);
-	}
+	}*/
 
-	return sync_success && notify_success && vid_insync == vid_commit;
+	return sync_success /*&& notify_success*/ && vid_insync == vid_commit;
 }
 
 
@@ -287,8 +337,8 @@ fab::statetransfer(std::string m)
 		 (long unsigned) cl, ret);
 		return false;
 	}
-	if (stf && last_myvs != r.last) {
-		stf->unmarshal_state(r.state);
+	if (last_myvs != r.last) {
+		unmarshal_state(r.state);
 	}
 	last_myvs = r.last;
 	tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
@@ -296,7 +346,7 @@ fab::statetransfer(std::string m)
 	return true;
 }
 
-bool
+/*bool
 fab::statetransferdone(std::string m) {
 	// You fill this in for Lab 7
 	// - Inform primary that this slave has synchronized for vid_insync
@@ -314,7 +364,7 @@ fab::statetransferdone(std::string m) {
 	VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
 
 	return cl != NULL && ret == fab_protocol::OK;
-}
+}*/
 
 
 bool
@@ -357,25 +407,57 @@ fab::commit_change(unsigned vid)
 void 
 fab::commit_change_wo(unsigned vid) 
 {
-	if (vid <= vid_commit)
-		return;
-	tprintf("commit_change: new view (%d)  last vs (%d,%d) %s insync %d\n", 
-	 vid, last_myvs.vid, last_myvs.seqno, primary.c_str(), insync);
-	vid_commit = vid;
-	inviewchange = true;
+  if (vid <= vid_commit)
+    return;
+  tprintf("commit_change: new view (%d)  last vs (%d,%d) %s\n", 
+    vid, last_myvs.vid, last_myvs.seqno, primary.c_str());
+  vid_commit = vid;
+  inviewchange = true;
 
-	if ( !cfg->has_metadata(vid) ) {
-		set_primary(vid);
-		pthread_cond_signal(&recovery_cond);
-		if (cfg->ismember(cfg->myaddr(), vid_commit))
-			breakpoint2();
-	}
-	else {
-		// Metadata
-		std::string metadata = cfg->get_metadata(vid);
-		update_metadata(metadata);
-		pthread_cond_signal(&recovery_cond);
-	}
+  if ( !cfg->has_metadata(vid) ) {
+    set_primary(vid);
+
+    // adds new servers to the global state
+    std::vector<std::string> members = cfg->get_view(vid);
+    for (unsigned int ii = 0; ii < members.size(); ++ii) {
+      std::string cur_member = members[ii];
+      if (state.server_to_extent_map.find(cur_member) ==
+          state.server_to_extent_map.end()) {
+        // TEST CODE
+        extent_set tmpset;
+        tmpset.insert(10);
+        state.server_to_extent_map.insert(std::make_pair(cur_member, tmpset));
+        state.extent_to_server_map[10].insert(cur_member);
+        // TEST CODE END
+
+        /*state.server_to_extent_map.insert(std::make_pair(cur_member,
+            extent_set()));*/
+      }
+    }
+    // removes dead servers from the global state
+    // we still need to reallocate their extents
+    for (server_to_extent_map_t::iterator iter =
+        state.server_to_extent_map.begin();
+        iter != state.server_to_extent_map.end(); ) {
+      if (!isamember(iter->first, members)) {
+        server_to_extent_map_t::iterator to_delete = iter;
+        ++iter;
+        state.server_to_extent_map.erase(to_delete);
+      } else {
+        ++iter;
+      }
+    }
+
+    pthread_cond_signal(&recovery_cond);
+    if (cfg->ismember(cfg->myaddr(), vid_commit))
+      breakpoint2();
+  }
+  else {
+    // Metadata
+    std::string metadata = cfg->get_metadata(vid);
+    update_metadata(metadata);
+    pthread_cond_signal(&recovery_cond);
+  }
 }
 
 void
@@ -393,6 +475,7 @@ fab::execute(int procno, std::string req, std::string &r)
 	unmarshall args(req);
 	marshall rep;
 	std::string reps;
+  printf("in execute: calling %d\n", procno);
 	fab_protocol::status ret = h->fn(args, rep);
 	marshall rep1;
 	rep1 << ret;
@@ -409,11 +492,11 @@ fab::execute(int procno, std::string req, std::string &r)
 fab_client_protocol::status
 fab::client_invoke(int procno, std::string req, std::string &r)
 {
-	// printf("in client_invoke %d\n", procno);
+	printf("in client_invoke %d\n", procno);
 
 	// You fill this in for Lab 7
 	ScopedLock ml(&invoke_mutex);
-	// printf("acquired invoke mutex\n");
+
 	pthread_mutex_lock(&fab_mutex);
 	// printf("acquired fab mutex\n");
 
@@ -429,15 +512,16 @@ fab::client_invoke(int procno, std::string req, std::string &r)
 		ret = fab_client_protocol::NOTPRIMARY;
 	} */ else {
 
-		// printf("in client_invoke %d before getview\n", procno);
+		printf("in client_invoke %d before execute \n", procno);
 		// fflush(stdout);
 
 		execute(procno, req, r);
 	}
 
 	pthread_mutex_unlock(&fab_mutex);
-	// printf("client_invoke returns %d\n", ret);
-	// fflush(stdout);
+
+  printf("client_invoke returns %d\n", ret);
+	
 	return ret;
 }
 
@@ -487,11 +571,11 @@ fab_protocol::transferres &r)
 	// Code will be provided in Lab 7
 	tprintf("transferreq from %s (%d,%d) vs (%d,%d)\n", src.c_str(), 
 	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
-	if (!insync || vid != vid_insync) {
+	if (vid != vid_insync) {
 		 return fab_protocol::BUSY;
 	}
-	if (stf && last != last_myvs) 
-		r.state = stf->marshal_state();
+	if (last != last_myvs) 
+		r.state = marshal_state();
 	r.last = last_myvs;
 	return ret;
 }
@@ -499,7 +583,6 @@ fab_protocol::transferres &r)
 /**
 	* RPC handler: Inform the local node (the primary) that node m has synchronized
 	* for view vid
-	*/
 fab_protocol::status
 fab::transferdonereq(std::string m, unsigned vid, int &)
 {
@@ -521,6 +604,7 @@ fab::transferdonereq(std::string m, unsigned vid, int &)
 	}
 	return ret;
 }
+	*/
 
 // a node that wants to join an fab as a server sends a
 // joinreq to the fab's current primary; this is the
@@ -536,9 +620,9 @@ fab::joinreq(std::string m, viewstamp last, fab_protocol::joinres &r)
 	if (cfg->ismember(m, vid_commit)) {
 		tprintf("joinreq: is still a member\n");
 		r.log = cfg->dump();
-	} else if (cfg->myaddr() != primary) {
+/*	} else if (cfg->myaddr() != primary) {
 		tprintf("joinreq: busy\n");
-		ret = fab_protocol::BUSY;
+		ret = fab_protocol::BUSY;*/
 	} else {
 		// We cache vid_commit to avoid adding m to a view which already contains 
 		// m due to race condition
@@ -689,20 +773,173 @@ fab::breakpointreq(int b, int &r)
 	return r;
 }
 
-int fab::client_put(extent_protocol::extentid_t id, std::string, int &) {return 0;}
+int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
+  printf("in client_put for id %lld with val %s\n", id, val.c_str());
+
+  fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
+  extent_to_server_map_t::iterator iter = state.extent_to_server_map.find(id);
+
+  if (iter != state.extent_to_server_map.end()) {
+    server_set extent_group = iter->second;
+    int num_yes = 0;
+
+    printf("sending order to other extent servers\n");
+
+    for (server_set::iterator server = extent_group.begin();
+        server != extent_group.end(); ++server) {
+      VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+      
+      handle h(*server);
+      rpcc* cl = h.safebind();
+      if (cl != NULL) {
+        fab_protocol::fabresult result;
+        result.status = fab_protocol::INTERNAL_ERR;
+        cl->call(fab_protocol::order, id, ts, false, result, rpcc::to(1000));
+        if (result.status == fab_protocol::INTERNAL_OK) {
+          ++num_yes;
+        }
+      }
+
+      VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+    }
+
+    if (num_yes >= static_cast<int>(extent_group.size()) / 2 + 1) {
+      printf("client_put: order OK\n");
+      int num_yes_2 = 0;
+
+      for (server_set::iterator server = extent_group.begin();
+          server != extent_group.end(); ++server) {
+        VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+        
+        handle h(*server);
+        rpcc* cl = h.safebind();
+        if (cl != NULL) {
+          int status;
+          cl->call(fab_protocol::put, id, val, ts, status, rpcc::to(1000));
+          if (status == fab_protocol::INTERNAL_OK) {
+            ++num_yes_2;
+          }
+        }
+
+        VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+      }
+      if (num_yes_2 >= static_cast<int>(extent_group.size()) / 2 + 1) {
+        printf("client_put: success\n");
+        return fab_protocol::OK;
+      } else {
+        return fab_protocol::ERR;
+      }
+    } else {
+      return fab_protocol::ERR;
+    }
+  } else {
+    printf("extent %lld not found\n", id);
+  }
+
+  return 0;
+}
+
 int fab::client_get(extent_protocol::extentid_t id, std::string &) {
 	printf("Client_get\n");
 	return 0;
 }
+
 int fab::client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
+
 int fab::client_remove(extent_protocol::extentid_t id, int &) {return 0;}
 
-int fab::put(extent_protocol::extentid_t id, std::string, int &) {return 0;}
-int fab::get(extent_protocol::extentid_t id, std::string &) {return 0;}
-int fab::getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
-int fab::remove(extent_protocol::extentid_t id, int &) {return 0;}
+int fab::put(extent_protocol::extentid_t id, std::string val,
+    fab_protocol::timestamp ts, int& status) {
+  ScopedLock lock(&fab_mutex);
 
+  timestamp_map_t::iterator iter = timestamp_map.find(id);
+  if (iter == timestamp_map.end()) {
+    printf("ERROR: no timestamp for extent %lld found in put\n", id);
+    status = fab_protocol::INTERNAL_ERR;
+  } else {
+    bool flag = (ts > iter->second.valTs && ts >= iter->second.ordTs);
+    if (flag) {
+      int r;
+      printf("put writing value for extent %lld: %s\n", id, val.c_str());
+      int ret = fabes->put(id, val, r);
+      if (ret != extent_protocol::OK) {
+        status = fab_protocol::INTERNAL_ERR;
+      } else {
+        iter->second.valTs = ts;
+        status = fab_protocol::INTERNAL_OK;
+      }
+    } else {
+      status = fab_protocol::INTERNAL_OLD;
+    }
+  }
+  return status;
+}
 
+int fab::get(extent_protocol::extentid_t id, fab_protocol::fabresult& result) {
+  return 0;
+}
 
+int fab::getattr(extent_protocol::extentid_t id,
+    fab_protocol::fabresult& result) {
+  return 0;
+}
 
+int fab::remove(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+    int& status) {
+  return 0;
+}
 
+int fab::order(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+    bool return_value, fab_protocol::fabresult& result) {
+  ScopedLock lock(&fab_mutex);
+
+  timestamp_map_t::iterator iter = timestamp_map.find(id);
+  if (iter == timestamp_map.end()) {
+    printf("ERROR: no timestamp for extent %lld found in order\n", id);
+    result.status = fab_protocol::INTERNAL_ERR;
+  } else {
+    bool flag = (ts > std::max(iter->second.valTs, iter->second.ordTs));
+    if (flag) {
+      iter->second.ordTs = ts;
+      result.status = fab_protocol::INTERNAL_OK;
+    } else {
+      result.status = fab_protocol::INTERNAL_OLD;
+    }
+    result.ts = iter->second.valTs;
+
+    if (return_value) {
+      int ret = fabes->get(id, result.val);
+      if (ret != extent_protocol::OK) {
+        result.status = fab_protocol::INTERNAL_ERR;
+      }
+    }
+  }
+  return result.status;
+}
+
+std::string
+fab::marshal_state()
+{
+  marshall rep;
+  rep << state;
+  return rep.str();
+}
+
+void
+fab::unmarshal_state(std::string state)
+{
+  unmarshall rep(state);
+  rep >> state;
+}
+
+marshall& operator <<(marshall& m, const fab::global_state& g) {
+  m << g.server_to_extent_map;
+  m << g.extent_to_server_map;
+  return m;
+}
+
+unmarshall& operator >>(unmarshall& m, fab::global_state& g) {
+  m >> g.server_to_extent_map;
+  m >> g.extent_to_server_map;
+  return m;
+}

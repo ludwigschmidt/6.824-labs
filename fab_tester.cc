@@ -15,9 +15,11 @@ int main(int argc, char* argv[]) {
   extent_client ec(argv[1]);
   printf("done");
   string s;
-  printf("calling get for eid 0 ...\n");
-  ec.get(0, s);
-  printf("result: %s\n", s.c_str());
+  printf("calling put for eid 10 foo ...\n");
+  int r = ec.put(10, "foo");
+  ec.flush(10);
+  //int r = ec.get(10, s);
+  printf("result: %d\n", r);
 
   return 0;
 }
