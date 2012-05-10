@@ -824,9 +824,120 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
   return 0;
 }
 
-int fab::client_get(extent_protocol::extentid_t id, std::string &) {
-	printf("Client_get\n");
-	return 0;
+int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
+  printf("in client_get for id %lld\n", id);
+
+  int ret = 0;
+
+  extent_to_server_map_t::iterator iter = state.extent_to_server_map.find(id);
+
+  if (iter != state.extent_to_server_map.end()) {
+    server_set extent_group = iter->second;
+    int majority = static_cast<int>(extent_group.size()) / 2 + 1;
+
+    int num_yes = 0;
+    fab_protocol::timestamp common_ts;
+    bool first = true;
+    bool all_ts_same = true;
+    std::string common_val;
+    
+    for (server_set::iterator server = extent_group.begin();
+        server != extent_group.end() && all_ts_same; ++server) {
+      VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+      
+      handle h(*server);
+      rpcc* cl = h.safebind();
+      if (cl != NULL) {
+        fab_protocol::fabresult result;
+        result.status = fab_protocol::INTERNAL_ERR;
+        cl->call(fab_protocol::get, id, result, rpcc::to(1000));
+        if (result.status == fab_protocol::INTERNAL_OK) {
+          ++num_yes;
+          common_val = result.val;
+        }
+        if(first) {
+          common_ts = result.ts;
+          first = false;
+        } else {
+          if (result.ts != common_ts ) {
+            all_ts_same = false;
+          }
+        }
+      }
+
+      VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+    }
+
+    if (num_yes >= majority) {
+      val = common_val;
+      ret = extent_protocol::OK;
+    } else {
+      fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
+
+      fab_protocol::timestamp highest_ts = 0;
+      std::string highest_val = "";
+      int num_yes_2 = 0;
+
+      for (server_set::iterator server = extent_group.begin();
+          server != extent_group.end() && all_ts_same; ++server) {
+        VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+        
+        handle h(*server);
+        rpcc* cl = h.safebind();
+        if (cl != NULL) {
+          fab_protocol::fabresult result;
+
+          cl->call(fab_protocol::order, id, ts, true, result, rpcc::to(1000));
+
+          if (result.status == fab_protocol::INTERNAL_OK) {
+            ++num_yes_2;
+            if (result.ts > highest_ts) {
+              highest_ts = result.ts;
+              highest_val = result.val;
+            }
+          }
+        }
+        VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+      }
+
+      if (num_yes_2 >= majority) {
+        int num_yes_3 = 0;
+
+        for (server_set::iterator server = extent_group.begin();
+            server != extent_group.end() && all_ts_same; ++server) {
+          VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+          
+          handle h(*server);
+          rpcc* cl = h.safebind();
+          if (cl != NULL) {
+            int status;
+
+            cl->call(fab_protocol::put, id, highest_val, ts, status,
+                rpcc::to(1000));
+
+            if (status == fab_protocol::INTERNAL_OK) {
+              ++num_yes_3;
+            }
+          }
+          VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+        }
+
+        if (num_yes_3 >= majority) {
+          val = highest_val;
+          ret = extent_protocol::OK;
+        } else {
+          ret = extent_protocol::IOERR;
+        }
+      } else {
+        ret = extent_protocol::IOERR;
+      }
+    }
+  } else {
+    printf("extent %lld not found in get.\n", id);
+    ret = extent_protocol::NOENT;
+  }
+
+  return ret;
 }
 
 int fab::client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
@@ -861,7 +972,26 @@ int fab::put(extent_protocol::extentid_t id, std::string val,
 }
 
 int fab::get(extent_protocol::extentid_t id, fab_protocol::fabresult& result) {
-  return 0;
+  ScopedLock lock(&fab_mutex);
+
+  timestamp_map_t::iterator iter = timestamp_map.find(id);
+  if (iter == timestamp_map.end()) {
+    printf("ERROR: no timestamp for extent %lld found in get\n", id);
+    result.status = fab_protocol::INTERNAL_ERR;
+  } else {
+    bool flag = iter->second.valTs >= iter->second.ordTs;
+    if (flag) {
+      result.status = fab_protocol::INTERNAL_OK;
+    } else {
+      result.status = fab_protocol::INTERNAL_OLD;
+    }
+    int ret = fabes->get(id, result.val);
+    if (ret != extent_protocol::OK) {
+      result.status = fab_protocol::INTERNAL_ERR;
+    }
+    result.ts = iter->second.valTs;
+  }
+  return result.status;
 }
 
 int fab::getattr(extent_protocol::extentid_t id,
