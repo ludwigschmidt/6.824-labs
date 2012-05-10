@@ -16,9 +16,9 @@
 class fab : public config_view_change, public fab_state_transfer {
  public:
   typedef std::set<extent_protocol::extentid_t> extent_set;
-  typedef std::set<std::string> string_set;
+  typedef std::set<std::string> server_set;
   typedef std::map<std::string, extent_set> server_to_extent_map_t;
-  typedef std::map<extent_protocol::extentid_t, string_set>
+  typedef std::map<extent_protocol::extentid_t, server_set>
       extent_to_server_map_t;
 
   struct global_state {
@@ -30,6 +30,16 @@ class fab : public config_view_change, public fab_state_transfer {
   void reg1(int proc, handler *);
 
   global_state state;
+
+  struct extent_timestamps {
+    fab_protocol::timestamp valTs;
+    fab_protocol::timestamp ordTs;
+  };
+  typedef std::map<extent_protocol::extentid_t, extent_timestamps>
+      timestamp_map_t;
+
+  timestamp_map_t timestamp_map;
+
 
  protected:
   std::map<int, handler *> procs;
@@ -55,15 +65,19 @@ class fab : public config_view_change, public fab_state_transfer {
   bool break1;
   bool break2;
 
-  int client_put(extent_protocol::extentid_t id, std::string, int &);
+  int client_put(extent_protocol::extentid_t id, std::string val, int& r);
   int client_get(extent_protocol::extentid_t id, std::string &);
   int client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
-  int client_remove(extent_protocol::extentid_t id, int &);
+  int client_remove(extent_protocol::extentid_t id, int& r);
 	
-  int put(extent_protocol::extentid_t id, std::string, int &);
-  int get(extent_protocol::extentid_t id, std::string &);
-  int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
-  int remove(extent_protocol::extentid_t id, int &);
+  int put(extent_protocol::extentid_t id, std::string val,
+      fab_protocol::timestamp ts, int& status);
+  int get(extent_protocol::extentid_t id, fab_protocol::fabresult& result);
+  int getattr(extent_protocol::extentid_t id, fab_protocol::fabresult& result);
+  int remove(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+      int& status);
+  int order(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
+      bool return_value, fab_protocol::fabresult& result);
 	
   fab_client_protocol::status client_members(int i, 
 					     std::vector<std::string> &r);
