@@ -390,7 +390,7 @@ config::get_metadata(unsigned vid)
   VERIFY(split(acc->value(vid), ';').size() == 2);
   std::list<std::string> values = split(acc->value(vid), ';');
   values.pop_front();
-  std::string metadata = values.front();
+  std::string metadata = values.front().substr(1);
   return metadata;
 }
 

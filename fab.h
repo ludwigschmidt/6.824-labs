@@ -40,6 +40,11 @@ class fab : public config_view_change, public fab_state_transfer {
 
   timestamp_map_t timestamp_map;
 
+  void static allocate_new(extent_protocol::extentid_t id,
+      server_set& new_servers, const global_state& state);
+
+  static const int extent_replica_size = 3;
+
 
  protected:
   std::map<int, handler *> procs;

@@ -81,6 +81,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 
 #include "handle.h"
 #include "fab.h"
@@ -464,6 +465,32 @@ void
 fab::update_metadata(std::string metadata)
 {
 	printf("META: %s\n", metadata.c_str());
+
+  if (metadata.substr(0, 8) == "add eid ") {
+    extent_protocol::extentid_t id;
+    std::stringstream ss(metadata.substr(8));
+    ss >> id;
+    printf("adding extent %lld to global state\n", id);
+    
+    server_set new_servers;
+    allocate_new(id, new_servers, state);
+
+    if (new_servers.find(cfg->myaddr()) != new_servers.end()) {
+      printf("adding zero timestamps for extent %lld\n", id);
+      extent_timestamps new_timestamps;
+      new_timestamps.valTs = new_timestamps.ordTs = 0;
+      timestamp_map.insert(std::make_pair(id, new_timestamps));
+    }
+
+    printf("adding extent %lld to the following servers:", id);
+    state.extent_to_server_map.insert(std::make_pair(id, new_servers));
+    for (server_set::iterator iter = new_servers.begin();
+        iter != new_servers.end(); ++iter) {
+      state.server_to_extent_map[*iter].insert(id);
+      printf(" %s", iter->c_str());
+    }
+    printf("\n");
+  }
 }
 
 void
@@ -776,10 +803,29 @@ fab::breakpointreq(int b, int &r)
 int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
   printf("in client_put for id %lld with val %s\n", id, val.c_str());
 
-  fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
+  int num_tries_left = 3;
   extent_to_server_map_t::iterator iter = state.extent_to_server_map.find(id);
 
-  if (iter != state.extent_to_server_map.end()) {
+  while (num_tries_left > 0 && iter == state.extent_to_server_map.end()) {
+    printf("extent %lld not found, adding it\n", id);
+		unsigned vid_cache = vid_commit;
+    std::stringstream ss;
+    ss << "add eid " << id;
+
+		VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
+		cfg->propose_metadata(ss.str(), vid_cache);
+		VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
+
+    iter = state.extent_to_server_map.find(id);
+    --num_tries_left;
+  }
+
+  fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
+
+  if (iter == state.extent_to_server_map.end()) {
+    printf("Could not create extent %lld\n", id);
+    return extent_protocol::IOERR;
+  } else {
     server_set extent_group = iter->second;
     int num_yes = 0;
 
@@ -832,10 +878,7 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
     } else {
       return fab_protocol::ERR;
     }
-  } else {
-    printf("extent %lld not found\n", id);
   }
-
   return 0;
 }
 
@@ -1072,4 +1115,20 @@ unmarshall& operator >>(unmarshall& m, fab::global_state& g) {
   m >> g.server_to_extent_map;
   m >> g.extent_to_server_map;
   return m;
+}
+
+void fab::allocate_new(extent_protocol::extentid_t id, server_set& new_servers,
+    const global_state& state) {
+  new_servers.clear();
+  std::vector<std::pair<size_t, std::string> > servers;
+  for (server_to_extent_map_t::const_iterator iter
+      = state.server_to_extent_map.begin();
+      iter != state.server_to_extent_map.end(); ++iter) {
+    servers.push_back(std::make_pair(iter->second.size(), iter->first));
+  }
+  std::nth_element(servers.begin(), servers.begin() + extent_replica_size - 1,
+      servers.end());
+  for (int ii = 0; ii < extent_replica_size; ++ii) {
+    new_servers.insert(servers[ii].second);
+  }
 }
