@@ -111,6 +111,7 @@ class fab : public config_view_change, public fab_state_transfer {
   void breakpoint2();
   void partition1();
   void commit_change_wo(unsigned vid);
+  void update_metadata(std::string metadata);
  public:
   fab (std::string _first, std::string _me);
   ~fab() {};

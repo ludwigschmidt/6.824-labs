@@ -49,6 +49,10 @@ class config : public paxos_change {
   void paxos_commit(unsigned instance, std::string v);
   rpcs *get_rpcs() { return acc->get_rpcs(); }
   void breakpoint(int b) { pro->breakpoint(b); }
+
+  bool propose_metadata(std::string, unsigned vid);
+  bool has_metadata(unsigned vid);
+  std::string get_metadata(unsigned vid);
 };
 
 #endif

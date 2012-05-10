@@ -80,6 +80,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "handle.h"
 #include "fab.h"
@@ -406,50 +407,64 @@ fab::commit_change(unsigned vid)
 void 
 fab::commit_change_wo(unsigned vid) 
 {
-	if (vid <= vid_commit)
-		return;
-	tprintf("commit_change: new view (%d)  last vs (%d,%d) %s\n", 
-	 vid, last_myvs.vid, last_myvs.seqno, primary.c_str());
-	vid_commit = vid;
-	inviewchange = true;
-	set_primary(vid);
+  if (vid <= vid_commit)
+    return;
+  tprintf("commit_change: new view (%d)  last vs (%d,%d) %s\n", 
+    vid, last_myvs.vid, last_myvs.seqno, primary.c_str());
+  vid_commit = vid;
+  inviewchange = true;
 
-  // adds new servers to the global state
-  std::vector<std::string> members = cfg->get_view(vid);
-  for (unsigned int ii = 0; ii < members.size(); ++ii) {
-    std::string cur_member = members[ii];
-    if (state.server_to_extent_map.find(cur_member) ==
-        state.server_to_extent_map.end()) {
-      // TEST CODE
-      extent_set tmpset;
-      tmpset.insert(10);
-      state.server_to_extent_map.insert(std::make_pair(cur_member, tmpset));
-      state.extent_to_server_map[10].insert(cur_member);
-      // TEST CODE END
+  if ( !cfg->has_metadata(vid) ) {
+    set_primary(vid);
 
-      /*state.server_to_extent_map.insert(std::make_pair(cur_member,
-          extent_set()));*/
+    // adds new servers to the global state
+    std::vector<std::string> members = cfg->get_view(vid);
+    for (unsigned int ii = 0; ii < members.size(); ++ii) {
+      std::string cur_member = members[ii];
+      if (state.server_to_extent_map.find(cur_member) ==
+          state.server_to_extent_map.end()) {
+        // TEST CODE
+        extent_set tmpset;
+        tmpset.insert(10);
+        state.server_to_extent_map.insert(std::make_pair(cur_member, tmpset));
+        state.extent_to_server_map[10].insert(cur_member);
+        // TEST CODE END
+
+        /*state.server_to_extent_map.insert(std::make_pair(cur_member,
+            extent_set()));*/
+      }
     }
-  }
-  // removes dead servers from the global state
-  // we still need to reallocate their extents
-  for (server_to_extent_map_t::iterator iter =
-      state.server_to_extent_map.begin();
-      iter != state.server_to_extent_map.end(); ) {
-    if (!isamember(iter->first, members)) {
-      server_to_extent_map_t::iterator to_delete = iter;
-      ++iter;
-      state.server_to_extent_map.erase(to_delete);
-    } else {
-      ++iter;
+    // removes dead servers from the global state
+    // we still need to reallocate their extents
+    for (server_to_extent_map_t::iterator iter =
+        state.server_to_extent_map.begin();
+        iter != state.server_to_extent_map.end(); ) {
+      if (!isamember(iter->first, members)) {
+        server_to_extent_map_t::iterator to_delete = iter;
+        ++iter;
+        state.server_to_extent_map.erase(to_delete);
+      } else {
+        ++iter;
+      }
     }
-  }
 
-	pthread_cond_signal(&recovery_cond);
-	if (cfg->ismember(cfg->myaddr(), vid_commit))
-		breakpoint2();
+    pthread_cond_signal(&recovery_cond);
+    if (cfg->ismember(cfg->myaddr(), vid_commit))
+      breakpoint2();
+  }
+  else {
+    // Metadata
+    std::string metadata = cfg->get_metadata(vid);
+    update_metadata(metadata);
+    pthread_cond_signal(&recovery_cond);
+  }
 }
 
+void
+fab::update_metadata(std::string metadata)
+{
+	printf("META: %s\n", metadata.c_str());
+}
 
 void
 fab::execute(int procno, std::string req, std::string &r)
