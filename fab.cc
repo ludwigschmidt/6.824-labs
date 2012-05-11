@@ -491,6 +491,13 @@ fab::update_metadata(std::string metadata)
     }
     printf("\n");
   }
+  else if (metadata.substr(0, 11) == "remove eid ") {
+    printf("removing eid!!\n");
+    
+  }
+  else {
+    printf("unsupported metadata\n");
+  } 
 }
 
 void
@@ -1000,7 +1007,31 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
 
 int fab::client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
 
-int fab::client_remove(extent_protocol::extentid_t id, int &) {return 0;}
+int fab::client_remove(extent_protocol::extentid_t id, int &) {
+  int num_tries_left = 3;
+  extent_to_server_map_t::iterator iter = state.extent_to_server_map.find(id);
+
+  // Repeatedly try to remove id 
+  while (num_tries_left > 0 && iter != state.extent_to_server_map.end()) {
+    printf("extent %lld found, removing it\n", id);
+    unsigned vid_cache = vid_commit;
+    std::stringstream ss;
+    ss << "remove eid " << id;
+
+    VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
+    cfg->propose_metadata(ss.str(), vid_cache);
+    VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
+
+    iter = state.extent_to_server_map.find(id);
+    --num_tries_left;
+  }
+  
+  if (iter != state.extent_to_server_map.end()) {
+    printf("Could not remove extent %lld\n", id);
+    return extent_protocol::IOERR;
+  }
+  return extent_protocol::OK;
+}
 
 int fab::put(extent_protocol::extentid_t id, std::string val,
     fab_protocol::timestamp ts, int& status) {
