@@ -371,9 +371,13 @@ fab::statetransfer(std::string m)
      (long unsigned) cl, ret);
     return false;
   }
-  if (last_myvs != r.last) {
+  //if (last_myvs != r.last) {
+    printf("unmarshalling state ...\n");
     unmarshal_state(r.state);
-  }
+  /*} else {
+    printf("not unmarshalling state: last_myvs = (%u, %u)  r.last = (%u, %u)\n",
+        last_myvs.vid, last_myvs.seqno, r.last.vid, r.last.seqno);
+  }*/
   last_myvs = r.last;
   tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
    m.c_str(), last_myvs.vid, last_myvs.seqno);
@@ -645,7 +649,7 @@ fab_protocol::transferres &r)
   if (vid != vid_insync) {
      return fab_protocol::BUSY;
   }
-  if (last != last_myvs) 
+  //if (last != last_myvs) 
     r.state = marshal_state();
   r.last = last_myvs;
   return ret;
@@ -1143,9 +1147,9 @@ fab::marshal_state()
 }
 
 void
-fab::unmarshal_state(std::string state)
+fab::unmarshal_state(std::string statestring)
 {
-  unmarshall rep(state);
+  unmarshall rep(statestring);
   rep >> state;
 }
 
