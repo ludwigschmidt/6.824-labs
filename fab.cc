@@ -475,6 +475,7 @@ fab::commit_change_wo(unsigned vid)
           reallocate(*it, new_server, state);
           state.server_to_extent_map[new_server].insert(*it);
           state.extent_to_server_map[*it].insert(new_server);
+          state.extent_to_server_map[*it].erase(to_delete->first);
           printf("assigned extent %lld to server %s\n", *it, new_server.c_str());
           if (new_server == cfg->myaddr()) {
             extent_timestamps new_timestamp;
