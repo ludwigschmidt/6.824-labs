@@ -21,6 +21,11 @@ int main(int argc, char* argv[]) {
     string s;
     int r = ec.get(id, s);
     printf("result: %d, val \"%s\"\n", r, s.c_str());
+  } else if (strcmp(argv[2], "remove") == 0) { 
+    printf("calling remove for eid %lld...\n", id);
+    int r = ec.remove(id); 
+    ec.flush(id);
+    printf("result: %d\n", r);
   } else {
     printf("unknown command: %s\n", argv[2]);
   }
