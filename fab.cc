@@ -553,13 +553,14 @@ fab::update_metadata(std::string metadata)
 
     for (server_set::iterator iter = servers.begin();
         iter != servers.end(); ++iter) {
-      extent_set extents = state.server_to_extent_map[*iter];
-      extents.erase(id);
+      state.server_to_extent_map[*iter].erase(id);
     }
     
     // Remove timestamp for extent
     if (servers.find(cfg->myaddr()) != servers.end()) {
       timestamp_map.erase(id);
+      int r;
+      fabes->remove(id, r);
     }
   }
   else {
