@@ -192,13 +192,17 @@ fab::failover_get()
     get_queue.deq(&id);
     std::string val;
     int num_tries = 3;
-    while( num_tries-- ) {
+    while( num_tries > 0 && timestamp_map[id].valTs == 0 ) {
       ScopedLock sl(&fab_mutex);
-      if (client_get(id, val) == extent_protocol::OK) {
-        break;
-      }
+      printf("trying to get id %lld\n",id);
+      client_get(id, val);
+      num_tries--;
     }
-    
+    if(timestamp_map[id].valTs == 0) {
+      printf("couldn't get id %lld\n",id);
+    } else {
+      printf("got value %s for extent id %lld\n",val.c_str(),id);
+    }
   }
 }
 // The recovery thread runs this function
@@ -471,10 +475,13 @@ fab::commit_change_wo(unsigned vid)
           reallocate(*it, new_server, state);
           state.server_to_extent_map[new_server].insert(*it);
           state.extent_to_server_map[*it].insert(new_server);
+          state.extent_to_server_map[*it].erase(to_delete->first);
+          printf("assigned extent %lld to server %s\n", *it, new_server.c_str());
           if (new_server == cfg->myaddr()) {
             extent_timestamps new_timestamp;
             new_timestamp.valTs = new_timestamp.ordTs = 0;
             timestamp_map.insert( std::make_pair(*it, new_timestamp) );
+            printf("extent %lld assigned to me, adding to the queue\n",*it);
             get_queue.enq(*it);
           }
         }
