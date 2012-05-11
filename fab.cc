@@ -92,69 +92,79 @@
 static void *
 recoverythread(void *x)
 {
-	fab *r = (fab *) x;
-	r->recovery();
-	return 0;
+  fab *r = (fab *) x;
+  r->recovery();
+  return 0;
+}
+
+static void *
+failover_get_thread(void *x)
+{
+  fab *r = (fab *) x;
+  r->failover_get();
+  return 0;
 }
 
 fab::fab(std::string _first, std::string _me) 
-	: primary(_first), inviewchange (true), vid_commit(0),
-		partitioned (false), dopartition(false), break1(false), break2(false)
+  : primary(_first), inviewchange (true), vid_commit(0),
+    partitioned (false), dopartition(false), break1(false), break2(false)
 {
-	pthread_t th;
+  pthread_t th, thget;
 
-	last_myvs.vid = 0;
-	last_myvs.seqno = 0;
-	myvs = last_myvs;
-	myvs.seqno = 1;
+  last_myvs.vid = 0;
+  last_myvs.seqno = 0;
+  myvs = last_myvs;
+  myvs.seqno = 1;
 
-	pthread_mutex_init(&fab_mutex, NULL);
-	pthread_mutex_init(&invoke_mutex, NULL);
-	pthread_cond_init(&recovery_cond, NULL);
-	pthread_cond_init(&sync_cond, NULL);
+  pthread_mutex_init(&fab_mutex, NULL);
+  pthread_mutex_init(&invoke_mutex, NULL);
+  pthread_cond_init(&recovery_cond, NULL);
+  pthread_cond_init(&sync_cond, NULL);
 
-	cfg = new config(_first, _me, this);
+  cfg = new config(_first, _me, this);
 
-	if (_first == _me) {
-		// Commit the first view here. We can not have acceptor::acceptor
-		// do the commit, since at that time this->cfg is not initialized
-		commit_change(1);
-	}
-	fabrpc = cfg->get_rpcs();
-	
-	fabrpc->reg(fab_client_protocol::invoke, this, &fab::client_invoke);
-	fabrpc->reg(fab_client_protocol::members, this, &fab::client_members);
-	
-	fabrpc->reg(fab_protocol::invoke, this, &fab::invoke);
-	fabrpc->reg(fab_protocol::transferreq, this, &fab::transferreq);
-//	fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
-	fabrpc->reg(fab_protocol::joinreq, this, &fab::joinreq);
+  if (_first == _me) {
+    // Commit the first view here. We can not have acceptor::acceptor
+    // do the commit, since at that time this->cfg is not initialized
+    commit_change(1);
+  }
+  fabrpc = cfg->get_rpcs();
+  
+  fabrpc->reg(fab_client_protocol::invoke, this, &fab::client_invoke);
+  fabrpc->reg(fab_client_protocol::members, this, &fab::client_members);
+  
+  fabrpc->reg(fab_protocol::invoke, this, &fab::invoke);
+  fabrpc->reg(fab_protocol::transferreq, this, &fab::transferreq);
+  //fabrpc->reg(fab_protocol::transferdonereq, this, &fab::transferdonereq);
+  fabrpc->reg(fab_protocol::joinreq, this, &fab::joinreq);
 
-	// tester must be on different port, otherwise it may partition itself
-	testsvr = new rpcs(atoi(_me.c_str()) + 1);
-	testsvr->reg(fab_test_protocol::net_repair, this, &fab::test_net_repairreq);
-	testsvr->reg(fab_test_protocol::breakpoint, this, &fab::breakpointreq);
+  // tester must be on different port, otherwise it may partition itself
+  testsvr = new rpcs(atoi(_me.c_str()) + 1);
+  testsvr->reg(fab_test_protocol::net_repair, this, &fab::test_net_repairreq);
+  testsvr->reg(fab_test_protocol::breakpoint, this, &fab::breakpointreq);
 
-	{
-			ScopedLock ml(&fab_mutex);
-			VERIFY(pthread_create(&th, NULL, &recoverythread, (void *) this) == 0);
-	}
-	
-	fabrpc->reg(fab_protocol::put, this, &fab::put);
-	fabrpc->reg(fab_protocol::get, this, &fab::get);
-	fabrpc->reg(fab_protocol::getattr, this, &fab::getattr);
-	fabrpc->reg(fab_protocol::remove, this, &fab::remove);
-	fabrpc->reg(fab_protocol::order, this, &fab::order);
-	
-	reg(extent_protocol::get, this, &fab::client_get);
-	reg(extent_protocol::getattr, this, &fab::client_getattr);
-	reg(extent_protocol::put, this, &fab::client_put);
-	reg(extent_protocol::remove, this, &fab::client_remove);
-	
-	fabes = new extent_server();
+  {
+      ScopedLock ml(&fab_mutex);
+      VERIFY(pthread_create(&th, NULL, &recoverythread, (void *) this) == 0);
+      VERIFY(pthread_create(&thget, NULL, &failover_get_thread, (void *) this) == 0);
+  }
+  
+  fabrpc->reg(fab_protocol::put, this, &fab::put);
+  fabrpc->reg(fab_protocol::get, this, &fab::get);
+  fabrpc->reg(fab_protocol::getattr, this, &fab::getattr);
+  fabrpc->reg(fab_protocol::remove, this, &fab::remove);
+  fabrpc->reg(fab_protocol::order, this, &fab::order);
+  
+  reg(extent_protocol::get, this, &fab::client_get);
+  reg(extent_protocol::getattr, this, &fab::client_getattr);
+  reg(extent_protocol::put, this, &fab::client_put);
+  reg(extent_protocol::remove, this, &fab::client_remove);
+  
+  fabes = new extent_server();
 
   state.server_to_extent_map.insert(std::make_pair(_me, extent_set()));
 
+  /*
   // TEST CODE
   state.server_to_extent_map[_me].insert(10);
   server_set tmpset;
@@ -163,38 +173,57 @@ fab::fab(std::string _first, std::string _me)
   timestamp_map[10].valTs = 0;
   timestamp_map[10].ordTs = 0;
   // TEST CODE END
+  */
 }
 
 void
 fab::reg1(int proc, handler *h)
 {
-	ScopedLock ml(&fab_mutex);
-	procs[proc] = h;
+  ScopedLock ml(&fab_mutex);
+  procs[proc] = h;
 }
 
+
+void
+fab::failover_get()
+{
+  while(1) {
+    extent_protocol::extentid_t id;
+    get_queue.deq(&id);
+    std::string val;
+    int num_tries = 3;
+    while( num_tries-- ) {
+      ScopedLock sl(&fab_mutex);
+      if (client_get(id, val) == extent_protocol::OK) {
+        break;
+      }
+    }
+    
+  }
+}
 // The recovery thread runs this function
 void
 fab::recovery()
 {
-	//bool r = true;
-	ScopedLock ml(&fab_mutex);
+  //bool r = true;
+  ScopedLock ml(&fab_mutex);
 
   bool state_synced = true;
 
-	while (1) {
-		while (!cfg->ismember(cfg->myaddr(), vid_commit)) {
-			if (join(primary)) {
+  while (1) {
+    while (!cfg->ismember(cfg->myaddr(), vid_commit)) {
+      if (join(primary)) {
         state_synced = false;
-				tprintf("recovery: joined\n");
-				commit_change_wo(cfg->vid());
-			} else {
-				VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
-				sleep (5); // XXX make another node in cfg primary?
-				VERIFY(pthread_mutex_lock(&fab_mutex)==0);
-			}
-		}
+        tprintf("recovery: joined\n");
+        commit_change_wo(cfg->vid());
+      } else {
+        VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
+        sleep (5); // XXX make another node in cfg primary?
+        VERIFY(pthread_mutex_lock(&fab_mutex)==0);
+      }
+    }
 
-		vid_insync = vid_commit;
+    vid_insync = vid_commit;
     if (!state_synced) {
       tprintf("recovery: sync vid_insync %d\n", vid_insync);
       /*if (primary == cfg->myaddr()) {
@@ -228,65 +257,65 @@ fab::recovery()
       tprintf("recovery: sync done\n");
     }
 
-		// If there was a commited viewchange during the synchronization, restart
-		// the recovery
-		if (vid_insync != vid_commit || !state_synced)
-			continue;
+    // If there was a commited viewchange during the synchronization, restart
+    // the recovery
+    if (vid_insync != vid_commit || !state_synced)
+      continue;
 
-		//if (r) { 
-			myvs.vid = vid_commit;
-			myvs.seqno = 1;
-			inviewchange = false;
-		//}
-		tprintf("recovery: go to sleep %d\n", inviewchange);
-		pthread_cond_wait(&recovery_cond, &fab_mutex);
-	}
+    //if (r) { 
+      myvs.vid = vid_commit;
+      myvs.seqno = 1;
+      inviewchange = false;
+    //}
+    tprintf("recovery: go to sleep %d\n", inviewchange);
+    pthread_cond_wait(&recovery_cond, &fab_mutex);
+  }
 }
 
 /*bool
 fab::sync_with_backups()
 {
-	pthread_mutex_unlock(&fab_mutex);
-	{
-		// Make sure that the state of lock_server_cache_fab is stable during 
-		// synchronization; otherwise, the primary's state may be more recent
-		// than replicas after the synchronization.
-		ScopedLock ml(&invoke_mutex);
-		// By acquiring and releasing the invoke_mutex once, we make sure that
-		// the state of lock_server_cache_fab will not be changed until all
-		// replicas are synchronized. The reason is that client_invoke arrives
-		// after this point of time will see inviewchange == true, and returns
-		// BUSY.
-	}
-	pthread_mutex_lock(&fab_mutex);
+  pthread_mutex_unlock(&fab_mutex);
+  {
+    // Make sure that the state of lock_server_cache_fab is stable during 
+    // synchronization; otherwise, the primary's state may be more recent
+    // than replicas after the synchronization.
+    ScopedLock ml(&invoke_mutex);
+    // By acquiring and releasing the invoke_mutex once, we make sure that
+    // the state of lock_server_cache_fab will not be changed until all
+    // replicas are synchronized. The reason is that client_invoke arrives
+    // after this point of time will see inviewchange == true, and returns
+    // BUSY.
+  }
+  pthread_mutex_lock(&fab_mutex);
 
-	backups.clear();
-	std::vector<std::string> members = cfg->get_view(vid_insync);
-	backups.insert(members.begin(), members.end());
-	backups.erase(primary);
+  backups.clear();
+  std::vector<std::string> members = cfg->get_view(vid_insync);
+  backups.insert(members.begin(), members.end());
+  backups.erase(primary);
 
-	// Start accepting synchronization request (statetransferreq) now!
-	insync = true;
-	// You fill this in for Lab 7
-	// Wait until
-	//   - all backups in view vid_insync are synchronized
-	//   - or there is a committed viewchange
+  // Start accepting synchronization request (statetransferreq) now!
+  insync = true;
+  // You fill this in for Lab 7
+  // Wait until
+  //   - all backups in view vid_insync are synchronized
+  //   - or there is a committed viewchange
 
-	while (vid_insync == vid_commit && !backups.empty()) {
-		pthread_cond_wait(&recovery_cond, &fab_mutex);
-	}
+  while (vid_insync == vid_commit && !backups.empty()) {
+    pthread_cond_wait(&recovery_cond, &fab_mutex);
+  }
 
-	insync = false;
-	return backups.empty() && vid_insync == vid_commit;
+  insync = false;
+  return backups.empty() && vid_insync == vid_commit;
 }*/
 
 
 bool
 fab::sync_with_primary()
 {
-	// Remember the primary of vid_insync
-	//std::string m = primary;
-	std::vector<std::string> members = cfg->get_view(vid_insync);
+  // Remember the primary of vid_insync
+  //std::string m = primary;
+  std::vector<std::string> members = cfg->get_view(vid_insync);
   std::string sync_target = "";
   for (unsigned int ii = 0; ii < members.size(); ++ii) {
     if (members[ii] != cfg->myaddr()) {
@@ -295,22 +324,22 @@ fab::sync_with_primary()
     }
   }
 
-	// You fill this in for Lab 7
-	// Keep synchronizing with primary until the synchronization succeeds,
-	// or there is a commited viewchange
+  // You fill this in for Lab 7
+  // Keep synchronizing with primary until the synchronization succeeds,
+  // or there is a commited viewchange
 
-	bool sync_success = false;
+  bool sync_success = false;
 
-	while (vid_insync == vid_commit && !sync_success) {
-		sync_success = statetransfer(sync_target);
-	}
+  while (vid_insync == vid_commit && !sync_success) {
+    sync_success = statetransfer(sync_target);
+  }
 
-	/*bool notify_success = false;
-	if (sync_success) {
-		notify_success = statetransferdone(m);
-	}*/
+  /*bool notify_success = false;
+  if (sync_success) {
+    notify_success = statetransferdone(m);
+  }*/
 
-	return sync_success /*&& notify_success*/ && vid_insync == vid_commit;
+  return sync_success /*&& notify_success*/ && vid_insync == vid_commit;
 }
 
 
@@ -321,77 +350,77 @@ fab::sync_with_primary()
 bool
 fab::statetransfer(std::string m)
 {
-	fab_protocol::transferres r;
-	handle h(m);
-	int ret;
-	tprintf("fab::statetransfer: contact %s w. my last_myvs(%d,%d)\n", 
-	 m.c_str(), last_myvs.vid, last_myvs.seqno);
-	VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
-	rpcc *cl = h.safebind();
-	if (cl) {
-		ret = cl->call(fab_protocol::transferreq, cfg->myaddr(), 
-														 last_myvs, vid_insync, r, rpcc::to(1000));
-	}
-	VERIFY(pthread_mutex_lock(&fab_mutex)==0);
-	if (cl == 0 || ret != fab_protocol::OK) {
-		tprintf("fab::statetransfer: couldn't reach %s %lx %d\n", m.c_str(), 
-		 (long unsigned) cl, ret);
-		return false;
-	}
-	if (last_myvs != r.last) {
-		unmarshal_state(r.state);
-	}
-	last_myvs = r.last;
-	tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
-	 m.c_str(), last_myvs.vid, last_myvs.seqno);
-	return true;
+  fab_protocol::transferres r;
+  handle h(m);
+  int ret;
+  tprintf("fab::statetransfer: contact %s w. my last_myvs(%d,%d)\n", 
+   m.c_str(), last_myvs.vid, last_myvs.seqno);
+  VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
+  rpcc *cl = h.safebind();
+  if (cl) {
+    ret = cl->call(fab_protocol::transferreq, cfg->myaddr(), 
+                             last_myvs, vid_insync, r, rpcc::to(1000));
+  }
+  VERIFY(pthread_mutex_lock(&fab_mutex)==0);
+  if (cl == 0 || ret != fab_protocol::OK) {
+    tprintf("fab::statetransfer: couldn't reach %s %lx %d\n", m.c_str(), 
+     (long unsigned) cl, ret);
+    return false;
+  }
+  if (last_myvs != r.last) {
+    unmarshal_state(r.state);
+  }
+  last_myvs = r.last;
+  tprintf("fab::statetransfer transfer from %s success, vs(%d,%d)\n", 
+   m.c_str(), last_myvs.vid, last_myvs.seqno);
+  return true;
 }
 
 /*bool
 fab::statetransferdone(std::string m) {
-	// You fill this in for Lab 7
-	// - Inform primary that this slave has synchronized for vid_insync
+  // You fill this in for Lab 7
+  // - Inform primary that this slave has synchronized for vid_insync
 
-	int ret = 0;
+  int ret = 0;
 
-	VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
-	handle h(m);
-	rpcc *cl = h.safebind();
-	if (cl != NULL) {
-		int r;
-		ret = cl->call(fab_protocol::transferdonereq, cfg->myaddr(), vid_insync, 
-			 r, rpcc::to(1000));
-	}
-	VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
+  VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
+  handle h(m);
+  rpcc *cl = h.safebind();
+  if (cl != NULL) {
+    int r;
+    ret = cl->call(fab_protocol::transferdonereq, cfg->myaddr(), vid_insync, 
+       r, rpcc::to(1000));
+  }
+  VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
 
-	return cl != NULL && ret == fab_protocol::OK;
+  return cl != NULL && ret == fab_protocol::OK;
 }*/
 
 
 bool
 fab::join(std::string m) {
-	handle h(m);
-	int ret;
-	fab_protocol::joinres r;
+  handle h(m);
+  int ret;
+  fab_protocol::joinres r;
 
-	tprintf("fab::join: %s mylast (%d,%d)\n", m.c_str(), last_myvs.vid, 
-					last_myvs.seqno);
-	VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
-	rpcc *cl = h.safebind();
-	if (cl != 0) {
-		ret = cl->call(fab_protocol::joinreq, cfg->myaddr(), last_myvs, 
-			 r, rpcc::to(120000));
-	}
-	VERIFY(pthread_mutex_lock(&fab_mutex)==0);
+  tprintf("fab::join: %s mylast (%d,%d)\n", m.c_str(), last_myvs.vid, 
+          last_myvs.seqno);
+  VERIFY(pthread_mutex_unlock(&fab_mutex)==0);
+  rpcc *cl = h.safebind();
+  if (cl != 0) {
+    ret = cl->call(fab_protocol::joinreq, cfg->myaddr(), last_myvs, 
+       r, rpcc::to(120000));
+  }
+  VERIFY(pthread_mutex_lock(&fab_mutex)==0);
 
-	if (cl == 0 || ret != fab_protocol::OK) {
-		tprintf("fab::join: couldn't reach %s %p %d\n", m.c_str(), 
-		 cl, ret);
-		return false;
-	}
-	tprintf("fab::join: succeeded %s\n", r.log.c_str());
-	cfg->restore(r.log);
-	return true;
+  if (cl == 0 || ret != fab_protocol::OK) {
+    tprintf("fab::join: couldn't reach %s %p %d\n", m.c_str(), 
+     cl, ret);
+    return false;
+  }
+  tprintf("fab::join: succeeded %s\n", r.log.c_str());
+  cfg->restore(r.log);
+  return true;
 }
 
 /*
@@ -401,8 +430,8 @@ fab::join(std::string m) {
 void 
 fab::commit_change(unsigned vid) 
 {
-	ScopedLock ml(&fab_mutex);
-	commit_change_wo(vid);
+  ScopedLock ml(&fab_mutex);
+  commit_change_wo(vid);
 }
 
 void 
@@ -424,15 +453,8 @@ fab::commit_change_wo(unsigned vid)
       std::string cur_member = members[ii];
       if (state.server_to_extent_map.find(cur_member) ==
           state.server_to_extent_map.end()) {
-        // TEST CODE
-        extent_set tmpset;
-        tmpset.insert(10);
-        state.server_to_extent_map.insert(std::make_pair(cur_member, tmpset));
-        state.extent_to_server_map[10].insert(cur_member);
-        // TEST CODE END
-
-        /*state.server_to_extent_map.insert(std::make_pair(cur_member,
-            extent_set()));*/
+        state.server_to_extent_map.insert(std::make_pair(cur_member,
+            extent_set()));
       }
     }
     // removes dead servers from the global state
@@ -442,6 +464,21 @@ fab::commit_change_wo(unsigned vid)
         iter != state.server_to_extent_map.end(); ) {
       if (!isamember(iter->first, members)) {
         server_to_extent_map_t::iterator to_delete = iter;
+        
+        for (extent_set::iterator it = to_delete->second.begin(); 
+            it != to_delete->second.end(); it++) {
+          std::string new_server;
+          reallocate(*it, new_server, state);
+          state.server_to_extent_map[new_server].insert(*it);
+          state.extent_to_server_map[*it].insert(new_server);
+          if (new_server == cfg->myaddr()) {
+            extent_timestamps new_timestamp;
+            new_timestamp.valTs = new_timestamp.ordTs = 0;
+            timestamp_map.insert( std::make_pair(*it, new_timestamp) );
+            get_queue.enq(*it);
+          }
+        }
+        
         ++iter;
         state.server_to_extent_map.erase(to_delete);
       } else {
@@ -464,7 +501,7 @@ fab::commit_change_wo(unsigned vid)
 void
 fab::update_metadata(std::string metadata)
 {
-	printf("META: %s\n", metadata.c_str());
+  printf("META: %s\n", metadata.c_str());
 
   if (metadata.substr(0, 8) == "add eid ") {
     extent_protocol::extentid_t id;
@@ -496,18 +533,18 @@ fab::update_metadata(std::string metadata)
 void
 fab::execute(int procno, std::string req, std::string &r)
 {
-	tprintf("execute\n");
-	handler *h = procs[procno];
-	VERIFY(h);
-	unmarshall args(req);
-	marshall rep;
-	std::string reps;
+  tprintf("execute\n");
+  handler *h = procs[procno];
+  VERIFY(h);
+  unmarshall args(req);
+  marshall rep;
+  std::string reps;
   printf("in execute: calling %d\n", procno);
-	fab_protocol::status ret = h->fn(args, rep);
-	marshall rep1;
-	rep1 << ret;
-	rep1 << rep.str();
-	r = rep1.str();
+  fab_protocol::status ret = h->fn(args, rep);
+  marshall rep1;
+  rep1 << ret;
+  rep1 << rep.str();
+  r = rep1.str();
 }
 
 //
@@ -519,37 +556,37 @@ fab::execute(int procno, std::string req, std::string &r)
 fab_client_protocol::status
 fab::client_invoke(int procno, std::string req, std::string &r)
 {
-	printf("in client_invoke %d\n", procno);
+  printf("in client_invoke %d\n", procno);
 
-	// You fill this in for Lab 7
-	ScopedLock ml(&invoke_mutex);
+  // You fill this in for Lab 7
+  ScopedLock ml(&invoke_mutex);
 
-	pthread_mutex_lock(&fab_mutex);
-	// printf("acquired fab mutex\n");
+  pthread_mutex_lock(&fab_mutex);
+  // printf("acquired fab mutex\n");
 
-	int ret = fab_client_protocol::OK;
+  int ret = fab_client_protocol::OK;
 
-	if (inviewchange) {
-		// printf("returning busy because in view change\n");
-		// fflush(stdout);
-		ret = fab_client_protocol::BUSY;
-	} /*else if (primary != cfg->myaddr()) {
-		// printf("returning notprimary because not primary\n");
-		// fflush(stdout);
-		ret = fab_client_protocol::NOTPRIMARY;
-	} */ else {
+  if (inviewchange) {
+    // printf("returning busy because in view change\n");
+    // fflush(stdout);
+    ret = fab_client_protocol::BUSY;
+  } /*else if (primary != cfg->myaddr()) {
+    // printf("returning notprimary because not primary\n");
+    // fflush(stdout);
+    ret = fab_client_protocol::NOTPRIMARY;
+  } */ else {
 
-		printf("in client_invoke %d before execute \n", procno);
-		// fflush(stdout);
+    printf("in client_invoke %d before execute \n", procno);
+    // fflush(stdout);
 
-		execute(procno, req, r);
-	}
+    execute(procno, req, r);
+  }
 
-	pthread_mutex_unlock(&fab_mutex);
+  pthread_mutex_unlock(&fab_mutex);
 
   printf("client_invoke returns %d\n", ret);
-	
-	return ret;
+  
+  return ret;
 }
 
 // 
@@ -562,28 +599,28 @@ fab::client_invoke(int procno, std::string req, std::string &r)
 fab_protocol::status
 fab::invoke(int proc, viewstamp vs, std::string req, int &dummy)
 {
-	// You fill this in for Lab 7
-	ScopedLock ml(&invoke_mutex);
-	ScopedLock rl(&fab_mutex);
+  // You fill this in for Lab 7
+  ScopedLock ml(&invoke_mutex);
+  ScopedLock rl(&fab_mutex);
 
-	fab_protocol::status ret = fab_protocol::OK;
+  fab_protocol::status ret = fab_protocol::OK;
 
-	if (inviewchange) {
-		ret = fab_protocol::ERR;
-	} else if (primary == cfg->myaddr()) {
-		ret = fab_protocol::ERR;
-	} else if (vs != myvs) {
-		ret = fab_protocol::ERR;
-	} else {
-		last_myvs = myvs;
-		++myvs.seqno;
-		std::string r;
-		execute(proc, req, r);
+  if (inviewchange) {
+    ret = fab_protocol::ERR;
+  } else if (primary == cfg->myaddr()) {
+    ret = fab_protocol::ERR;
+  } else if (vs != myvs) {
+    ret = fab_protocol::ERR;
+  } else {
+    last_myvs = myvs;
+    ++myvs.seqno;
+    std::string r;
+    execute(proc, req, r);
 
-		breakpoint1();
-	}
+    breakpoint1();
+  }
 
-	return ret;
+  return ret;
 }
 
 /**
@@ -593,45 +630,45 @@ fab_protocol::status
 fab::transferreq(std::string src, viewstamp last, unsigned vid, 
 fab_protocol::transferres &r)
 {
-	ScopedLock ml(&fab_mutex);
-	int ret = fab_protocol::OK;
-	// Code will be provided in Lab 7
-	tprintf("transferreq from %s (%d,%d) vs (%d,%d)\n", src.c_str(), 
-	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
-	if (vid != vid_insync) {
-		 return fab_protocol::BUSY;
-	}
-	if (last != last_myvs) 
-		r.state = marshal_state();
-	r.last = last_myvs;
-	return ret;
+  ScopedLock ml(&fab_mutex);
+  int ret = fab_protocol::OK;
+  // Code will be provided in Lab 7
+  tprintf("transferreq from %s (%d,%d) vs (%d,%d)\n", src.c_str(), 
+   last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
+  if (vid != vid_insync) {
+     return fab_protocol::BUSY;
+  }
+  if (last != last_myvs) 
+    r.state = marshal_state();
+  r.last = last_myvs;
+  return ret;
 }
 
 /**
-	* RPC handler: Inform the local node (the primary) that node m has synchronized
-	* for view vid
+  * RPC handler: Inform the local node (the primary) that node m has synchronized
+  * for view vid
 fab_protocol::status
 fab::transferdonereq(std::string m, unsigned vid, int &)
 {
-	int ret = fab_protocol::OK;
-	ScopedLock ml(&fab_mutex);
-	// You fill this in for Lab 7
-	// - Return BUSY if I am not insync, or if the slave is not synchronizing
-	//   for the same view with me
-	// - Remove the slave from the list of unsynchronized backups
-	// - Wake up recovery thread if all backups are synchronized
+  int ret = fab_protocol::OK;
+  ScopedLock ml(&fab_mutex);
+  // You fill this in for Lab 7
+  // - Return BUSY if I am not insync, or if the slave is not synchronizing
+  //   for the same view with me
+  // - Remove the slave from the list of unsynchronized backups
+  // - Wake up recovery thread if all backups are synchronized
 
-	if (!insync || vid != vid_insync) {
-		ret = fab_protocol::BUSY;
-	} else {
-		backups.erase(m);
-		if (backups.empty()) {
-			pthread_cond_broadcast(&recovery_cond);
-		}
-	}
-	return ret;
+  if (!insync || vid != vid_insync) {
+    ret = fab_protocol::BUSY;
+  } else {
+    backups.erase(m);
+    if (backups.empty()) {
+      pthread_cond_broadcast(&recovery_cond);
+    }
+  }
+  return ret;
 }
-	*/
+  */
 
 // a node that wants to join an fab as a server sends a
 // joinreq to the fab's current primary; this is the
@@ -639,33 +676,33 @@ fab::transferdonereq(std::string m, unsigned vid, int &)
 fab_protocol::status
 fab::joinreq(std::string m, viewstamp last, fab_protocol::joinres &r)
 {
-	int ret = fab_protocol::OK;
+  int ret = fab_protocol::OK;
 
-	ScopedLock ml(&fab_mutex);
-	tprintf("joinreq: src %s last (%d,%d) mylast (%d,%d)\n", m.c_str(), 
-	 last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
-	if (cfg->ismember(m, vid_commit)) {
-		tprintf("joinreq: is still a member\n");
-		r.log = cfg->dump();
+  ScopedLock ml(&fab_mutex);
+  tprintf("joinreq: src %s last (%d,%d) mylast (%d,%d)\n", m.c_str(), 
+   last.vid, last.seqno, last_myvs.vid, last_myvs.seqno);
+  if (cfg->ismember(m, vid_commit)) {
+    tprintf("joinreq: is still a member\n");
+    r.log = cfg->dump();
 /*	} else if (cfg->myaddr() != primary) {
-		tprintf("joinreq: busy\n");
-		ret = fab_protocol::BUSY;*/
-	} else {
-		// We cache vid_commit to avoid adding m to a view which already contains 
-		// m due to race condition
-		unsigned vid_cache = vid_commit;
-		VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
-		bool succ = cfg->add(m, vid_cache);
-		VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
-		if (cfg->ismember(m, cfg->vid())) {
-			r.log = cfg->dump();
-			tprintf("joinreq: ret %d log %s\n:", ret, r.log.c_str());
-		} else {
-			tprintf("joinreq: failed; proposer couldn't add %d\n", succ);
-			ret = fab_protocol::BUSY;
-		}
-	}
-	return ret;
+    tprintf("joinreq: busy\n");
+    ret = fab_protocol::BUSY;*/
+  } else {
+    // We cache vid_commit to avoid adding m to a view which already contains 
+    // m due to race condition
+    unsigned vid_cache = vid_commit;
+    VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
+    bool succ = cfg->add(m, vid_cache);
+    VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
+    if (cfg->ismember(m, cfg->vid())) {
+      r.log = cfg->dump();
+      tprintf("joinreq: ret %d log %s\n:", ret, r.log.c_str());
+    } else {
+      tprintf("joinreq: failed; proposer couldn't add %d\n", succ);
+      ret = fab_protocol::BUSY;
+    }
+  }
+  return ret;
 }
 
 /*
@@ -676,14 +713,14 @@ fab::joinreq(std::string m, viewstamp last, fab_protocol::joinres &r)
 fab_client_protocol::status
 fab::client_members(int i, std::vector<std::string> &r)
 {
-	std::vector<std::string> m;
-	ScopedLock ml(&fab_mutex);
-	m = cfg->get_view(vid_commit);
-	m.push_back(primary);
-	r = m;
-	tprintf("fab::client_members return %s m %s\n", print_members(m).c_str(),
-	 primary.c_str());
-	return fab_client_protocol::OK;
+  std::vector<std::string> m;
+  ScopedLock ml(&fab_mutex);
+  m = cfg->get_view(vid_commit);
+  m.push_back(primary);
+  r = m;
+  tprintf("fab::client_members return %s m %s\n", print_members(m).c_str(),
+   primary.c_str());
+  return fab_client_protocol::OK;
 }
 
 // if primary is member of new view, that node is primary
@@ -692,31 +729,31 @@ fab::client_members(int i, std::vector<std::string> &r)
 void
 fab::set_primary(unsigned vid)
 {
-	std::vector<std::string> c = cfg->get_view(vid);
-	std::vector<std::string> p = cfg->get_view(vid - 1);
-	VERIFY (c.size() > 0);
+  std::vector<std::string> c = cfg->get_view(vid);
+  std::vector<std::string> p = cfg->get_view(vid - 1);
+  VERIFY (c.size() > 0);
 
-	if (isamember(primary,c)) {
-		tprintf("set_primary: primary stays %s\n", primary.c_str());
-		return;
-	}
+  if (isamember(primary,c)) {
+    tprintf("set_primary: primary stays %s\n", primary.c_str());
+    return;
+  }
 
-	VERIFY(p.size() > 0);
-	for (unsigned i = 0; i < p.size(); i++) {
-		if (isamember(p[i], c)) {
-			primary = p[i];
-			tprintf("set_primary: primary is %s\n", primary.c_str());
-			return;
-		}
-	}
-	VERIFY(0);
+  VERIFY(p.size() > 0);
+  for (unsigned i = 0; i < p.size(); i++) {
+    if (isamember(p[i], c)) {
+      primary = p[i];
+      tprintf("set_primary: primary is %s\n", primary.c_str());
+      return;
+    }
+  }
+  VERIFY(0);
 }
 
 bool
 fab::amiprimary()
 {
-	ScopedLock ml(&fab_mutex);
-	return primary == cfg->myaddr() && !inviewchange;
+  ScopedLock ml(&fab_mutex);
+  return primary == cfg->myaddr() && !inviewchange;
 }
 
 
@@ -728,33 +765,33 @@ fab::amiprimary()
 void
 fab::net_repair_wo(bool heal)
 {
-	std::vector<std::string> m;
-	m = cfg->get_view(vid_commit);
-	for (unsigned i  = 0; i < m.size(); i++) {
-		if (m[i] != cfg->myaddr()) {
-				handle h(m[i]);
-	tprintf("fab::net_repair_wo: %s %d\n", m[i].c_str(), heal);
-	if (h.safebind()) h.safebind()->set_reachable(heal);
-		}
-	}
-	fabrpc->set_reachable(heal);
+  std::vector<std::string> m;
+  m = cfg->get_view(vid_commit);
+  for (unsigned i  = 0; i < m.size(); i++) {
+    if (m[i] != cfg->myaddr()) {
+        handle h(m[i]);
+  tprintf("fab::net_repair_wo: %s %d\n", m[i].c_str(), heal);
+  if (h.safebind()) h.safebind()->set_reachable(heal);
+    }
+  }
+  fabrpc->set_reachable(heal);
 }
 
 fab_test_protocol::status 
 fab::test_net_repairreq(int heal, int &r)
 {
-	ScopedLock ml(&fab_mutex);
-	tprintf("fab::test_net_repairreq: %d (dopartition %d, partitioned %d)\n", 
-	 heal, dopartition, partitioned);
-	if (heal) {
-		net_repair_wo(heal);
-		partitioned = false;
-	} else {
-		dopartition = true;
-		partitioned = false;
-	}
-	r = fab_test_protocol::OK;
-	return r;
+  ScopedLock ml(&fab_mutex);
+  tprintf("fab::test_net_repairreq: %d (dopartition %d, partitioned %d)\n", 
+   heal, dopartition, partitioned);
+  if (heal) {
+    net_repair_wo(heal);
+    partitioned = false;
+  } else {
+    dopartition = true;
+    partitioned = false;
+  }
+  r = fab_test_protocol::OK;
+  return r;
 }
 
 // simulate failure at breakpoint 1 and 2
@@ -762,42 +799,42 @@ fab::test_net_repairreq(int heal, int &r)
 void 
 fab::breakpoint1()
 {
-	if (break1) {
-		tprintf("Dying at breakpoint 1 in fab!\n");
-		exit(1);
-	}
+  if (break1) {
+    tprintf("Dying at breakpoint 1 in fab!\n");
+    exit(1);
+  }
 }
 
 void 
 fab::breakpoint2()
 {
-	if (break2) {
-		tprintf("Dying at breakpoint 2 in fab!\n");
-		exit(1);
-	}
+  if (break2) {
+    tprintf("Dying at breakpoint 2 in fab!\n");
+    exit(1);
+  }
 }
 
 void 
 fab::partition1()
 {
-	if (dopartition) {
-		net_repair_wo(false);
-		dopartition = false;
-		partitioned = true;
-	}
+  if (dopartition) {
+    net_repair_wo(false);
+    dopartition = false;
+    partitioned = true;
+  }
 }
 
 fab_test_protocol::status
 fab::breakpointreq(int b, int &r)
 {
-	r = fab_test_protocol::OK;
-	ScopedLock ml(&fab_mutex);
-	tprintf("fab::breakpointreq: %d\n", b);
-	if (b == 1) break1 = true;
-	else if (b == 2) break2 = true;
-	else if (b == 3 || b == 4) cfg->breakpoint(b);
-	else r = fab_test_protocol::ERR;
-	return r;
+  r = fab_test_protocol::OK;
+  ScopedLock ml(&fab_mutex);
+  tprintf("fab::breakpointreq: %d\n", b);
+  if (b == 1) break1 = true;
+  else if (b == 2) break2 = true;
+  else if (b == 3 || b == 4) cfg->breakpoint(b);
+  else r = fab_test_protocol::ERR;
+  return r;
 }
 
 int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
@@ -808,13 +845,13 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
 
   while (num_tries_left > 0 && iter == state.extent_to_server_map.end()) {
     printf("extent %lld not found, adding it\n", id);
-		unsigned vid_cache = vid_commit;
+    unsigned vid_cache = vid_commit;
     std::stringstream ss;
     ss << "add eid " << id;
 
-		VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
-		cfg->propose_metadata(ss.str(), vid_cache);
-		VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
+    VERIFY (pthread_mutex_unlock(&fab_mutex) == 0);
+    cfg->propose_metadata(ss.str(), vid_cache);
+    VERIFY (pthread_mutex_lock(&fab_mutex) == 0);
 
     iter = state.extent_to_server_map.find(id);
     --num_tries_left;
@@ -926,7 +963,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
       VERIFY(pthread_mutex_lock(&fab_mutex) == 0);
     }
 
-    if (num_yes >= majority) {
+    if (num_yes >= majority && all_ts_same) {
       val = common_val;
       ret = extent_protocol::OK;
     } else {
@@ -937,7 +974,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
       int num_yes_2 = 0;
 
       for (server_set::iterator server = extent_group.begin();
-          server != extent_group.end() && all_ts_same; ++server) {
+          server != extent_group.end(); ++server) {
         VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
         
         handle h(*server);
@@ -962,7 +999,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
         int num_yes_3 = 0;
 
         for (server_set::iterator server = extent_group.begin();
-            server != extent_group.end() && all_ts_same; ++server) {
+            server != extent_group.end(); ++server) {
           VERIFY(pthread_mutex_unlock(&fab_mutex) == 0);
           
           handle h(*server);
@@ -1131,4 +1168,17 @@ void fab::allocate_new(extent_protocol::extentid_t id, server_set& new_servers,
   for (int ii = 0; ii < extent_replica_size; ++ii) {
     new_servers.insert(servers[ii].second);
   }
+}
+
+void fab::reallocate(extent_protocol::extentid_t id, std::string& new_server,
+    const global_state& state) {
+  std::vector<std::pair<size_t, std::string> > servers;
+  for (server_to_extent_map_t::const_iterator iter
+      = state.server_to_extent_map.begin();
+      iter != state.server_to_extent_map.end(); ++iter) {
+    if (iter->second.find(id) == iter->second.end()) {
+      servers.push_back(std::make_pair(iter->second.size(), iter->first));
+    }
+  }
+  new_server = std::min_element(servers.begin(), servers.end())->second;
 }
