@@ -529,8 +529,27 @@ fab::update_metadata(std::string metadata)
     printf("\n");
   }
   else if (metadata.substr(0, 11) == "remove eid ") {
-    printf("removing eid!!\n");
+    extent_protocol::extentid_t id;
+    std::stringstream ss(metadata.substr(11));
+    ss >> id;
+    printf("removing extent %lld from global state\n", id);
+
+    // Retrieve set of servers that store the extent
+    server_set servers = state.extent_to_server_map[id];
+
+    // Remove extent from all servers
+    state.extent_to_server_map.erase(id);
+
+    for (server_set::iterator iter = servers.begin();
+        iter != servers.end(); ++iter) {
+      extent_set extents = state.server_to_extent_map[*iter];
+      extents.erase(id);
+    }
     
+    // Remove timestamp for extent
+    if (servers.find(cfg->myaddr()) != servers.end()) {
+      timestamp_map.erase(id);
+    }
   }
   else {
     printf("unsupported metadata\n");
