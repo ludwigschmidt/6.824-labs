@@ -39,10 +39,14 @@ class fab : public config_view_change, public fab_state_transfer {
       timestamp_map_t;
 
   timestamp_map_t timestamp_map;
-
+  fifo<extent_protocol::extentid_t> get_queue;
+  
   void static allocate_new(extent_protocol::extentid_t id,
       server_set& new_servers, const global_state& state);
 
+  void static reallocate(extent_protocol::extentid_t id,
+      std::string& new_server, const global_state& state);
+      
   static const int extent_replica_size = 3;
 
 
@@ -126,6 +130,7 @@ class fab : public config_view_change, public fab_state_transfer {
 
   bool amiprimary();
   void recovery();
+  void failover_get();
   void commit_change(unsigned vid);
 
   template<class S, class A1, class R>
