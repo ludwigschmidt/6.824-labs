@@ -957,8 +957,22 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
   return 0;
 }
 
+int fab::client_getattr(extent_protocol::extentid_t id,
+    extent_protocol::attr& attr) {
+  printf("in client_getattr for id %lld\n", id);
+  std::string val;
+  return client_getall(id, val, attr);
+}
+
 int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
   printf("in client_get for id %lld\n", id);
+  extent_protocol::attr attr;
+  return client_getall(id, val, attr);
+}
+
+int fab::client_getall(extent_protocol::extentid_t id, std::string& val,
+    extent_protocol::attr& attr) {
+  printf("in client_getall for id %lld\n", id);
 
   int ret = 0;
 
@@ -973,6 +987,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
     bool first = true;
     bool all_ts_same = true;
     std::string common_val;
+    extent_protocol::attr common_attr;
     
     for (server_set::iterator server = extent_group.begin();
         server != extent_group.end() && all_ts_same; ++server) {
@@ -987,6 +1002,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
         if (result.status == fab_protocol::INTERNAL_OK) {
           ++num_yes;
           common_val = result.val;
+          common_attr = result.attr;
         }
         if(first) {
           common_ts = result.ts;
@@ -1003,12 +1019,14 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
 
     if (num_yes >= majority && all_ts_same) {
       val = common_val;
+      attr = common_attr;
       ret = extent_protocol::OK;
     } else {
       fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
 
       fab_protocol::timestamp highest_ts = 0;
       std::string highest_val = "";
+      extent_protocol::attr highest_attr;
       int num_yes_2 = 0;
 
       for (server_set::iterator server = extent_group.begin();
@@ -1026,6 +1044,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
             ++num_yes_2;
             if (result.ts > highest_ts) {
               highest_ts = result.ts;
+              highest_attr = result.attr;
               highest_val = result.val;
             }
           }
@@ -1057,6 +1076,7 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
 
         if (num_yes_3 >= majority) {
           val = highest_val;
+          attr = highest_attr;
           ret = extent_protocol::OK;
         } else {
           ret = extent_protocol::IOERR;
@@ -1072,8 +1092,6 @@ int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
 
   return ret;
 }
-
-int fab::client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &) {return 0;}
 
 int fab::client_remove(extent_protocol::extentid_t id, int &) {
   int num_tries_left = 3;
@@ -1146,6 +1164,11 @@ int fab::get(extent_protocol::extentid_t id, fab_protocol::fabresult& result) {
     if (ret != extent_protocol::OK) {
       result.status = fab_protocol::INTERNAL_ERR;
     }
+    ret = fabes->getattr(id, result.attr);
+    if (ret != extent_protocol::OK) {
+      result.status = fab_protocol::INTERNAL_ERR;
+    }
+
     result.ts = iter->second.valTs;
   }
   return result.status;
@@ -1181,6 +1204,10 @@ int fab::order(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
 
     if (return_value) {
       int ret = fabes->get(id, result.val);
+      if (ret != extent_protocol::OK) {
+        result.status = fab_protocol::INTERNAL_ERR;
+      }
+      ret = fabes->getattr(id, result.attr);
       if (ret != extent_protocol::OK) {
         result.status = fab_protocol::INTERNAL_ERR;
       }

@@ -78,6 +78,9 @@ class fab : public config_view_change, public fab_state_transfer {
   int client_get(extent_protocol::extentid_t id, std::string &);
   int client_getattr(extent_protocol::extentid_t id, extent_protocol::attr &);
   int client_remove(extent_protocol::extentid_t id, int& r);
+
+  int client_getall(extent_protocol::extentid_t id, std::string& val,
+      extent_protocol::attr& attr);
 	
   int put(extent_protocol::extentid_t id, std::string val,
       fab_protocol::timestamp ts, int& status);
