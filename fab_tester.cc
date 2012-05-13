@@ -26,6 +26,12 @@ int main(int argc, char* argv[]) {
     int r = ec.remove(id); 
     ec.flush(id);
     printf("result: %d\n", r);
+  } else if (strcmp(argv[2], "getattr") == 0) {
+    printf("calling getattr for eid %lld...\n", id);
+    extent_protocol::attr attr;
+    int r = ec.getattr(id, attr); 
+    printf("result: %d, atime: %u, mtime: %u, ctime: %u size: %u\n", r,
+        attr.atime, attr.mtime, attr.ctime, attr.size);
   } else {
     printf("unknown command: %s\n", argv[2]);
   }
