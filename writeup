@@ -1,0 +1,7 @@
+We implemented a design for distributed extent servers based on the ideas in the paper FAB: Bulding Distributed Enterprise Disk Arrays from Commodity Components [1]. Our design follows the general outline of this paper. We support a large number of extent servers, and each extent is replicated three ways.
+
+
+
+
+[1] FAB: Building Distributed Enterprise Disk Arrays from Commodity Components 
+    Yasushi Saito, Svend Frølund, Alistair Veitch, Arif Merchant, Susan Spence

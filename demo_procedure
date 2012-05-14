@@ -1,0 +1,33 @@
+# Start lock 1
+# Start lock 2
+# Start lock 3
+
+
+# Start extent server 1
+# Start extent server 2
+# Start extent server 3
+
+
+# Start yfs client 1
+# Start yfs client 2
+
+# Create file at yfs1
+# Show that file is at yfs2, edit it
+# Show content of file at yfs1
+
+
+# Start extent server 4
+# Kill extent server 1
+
+# Edit file at yfs1
+# Show that file is edited at yfs2
+
+# Start extent server 5 
+# Start extent server 6 
+
+# Kill extent server 2
+# Kill extent server 3
+
+# Edit file at yfs1
+# Show that file is edited at yfs2
+
