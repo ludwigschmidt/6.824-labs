@@ -7,7 +7,7 @@
 #include <map>
 #include "pthread.h"
 #include "extent_protocol.h"
-#include "lock_client_cache.h"
+#include "lock_client_cache_rsm.h"
 #include "rpc.h"
 #include "fab_client.h"
 

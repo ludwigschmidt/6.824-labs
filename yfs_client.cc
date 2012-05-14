@@ -2,7 +2,7 @@
 #include "yfs_client.h"
 #include "extent_client.h"
 #include "lock_client.h"
-#include "lock_client_cache.h"
+#include "lock_client_cache_rsm.h"
 #include <sstream>
 #include <iostream>
 #include <stdio.h>
@@ -20,7 +20,7 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
   ec = new extent_client(extent_dst);
   extent_client_lock_release_user* ec_lock_release_user =
       new extent_client_lock_release_user(ec);
-  lc = new lock_client_cache(lock_dst, ec_lock_release_user);
+  lc = new lock_client_cache_rsm(lock_dst, ec_lock_release_user);
   
   {
     server_lock dirlock(lc, 1);

@@ -3,6 +3,7 @@
 
 #include "rpc.h"
 #include "extent_protocol.h"
+#include "rsm_protocol.h"
 
 
 class fab_client_protocol {
@@ -15,15 +16,6 @@ class fab_client_protocol {
   };
 };
 
-
-struct viewstamp {
-  viewstamp (unsigned int _vid = 0, unsigned int _seqno = 0) {
-    vid = _vid;
-    seqno = _seqno;
-  };
-  unsigned int vid;
-  unsigned int seqno;
-};
 
 class fab_protocol {
  public:
@@ -74,18 +66,6 @@ class fab_protocol {
 
 };
 
-inline bool operator==(viewstamp a, viewstamp b) {
-  return a.vid == b.vid && a.seqno == b.seqno;
-}
-
-inline bool operator>(viewstamp a, viewstamp b) {
-  return (a.vid > b.vid) || ((a.vid == b.vid) && a.seqno > b.seqno);
-}
-
-inline bool operator!=(viewstamp a, viewstamp b) {
-  return a.vid != b.vid || a.seqno != b.seqno;
-}
-
 inline marshall& operator<<(marshall &m, fab_protocol::fabresult f) {
   m << f.val;
   m << f.status;
@@ -99,19 +79,6 @@ inline unmarshall& operator>>(unmarshall& u, fab_protocol::fabresult& f) {
   u >> f.status;
   u >> f.attr;
   u >> f.ts;
-  return u;
-}
-
-inline marshall& operator<<(marshall &m, viewstamp v)
-{
-  m << v.vid;
-  m << v.seqno;
-  return m;
-}
-
-inline unmarshall& operator>>(unmarshall &u, viewstamp &v) {
-  u >> v.vid;
-  u >> v.seqno;
   return u;
 }
 

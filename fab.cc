@@ -194,14 +194,14 @@ fab::failover_get()
     int num_tries = 3;
     while( num_tries > 0 && timestamp_map[id].valTs == 0 ) {
       ScopedLock sl(&fab_mutex);
-      printf("trying to get id %lld\n",id);
+      printf("trying to get id %llu\n",id);
       client_get(id, val);
       num_tries--;
     }
     if(timestamp_map[id].valTs == 0) {
-      printf("couldn't get id %lld\n",id);
+      printf("couldn't get id %llu\n",id);
     } else {
-      printf("got value %s for extent id %lld\n",val.c_str(),id);
+      printf("got value %s for extent id %llu\n",val.c_str(),id);
     }
   }
 }
@@ -249,7 +249,7 @@ fab::recovery()
         for (extent_to_server_map_t::iterator iter =
             state.extent_to_server_map.begin();
             iter != state.extent_to_server_map.end(); ++iter) {
-          printf("extent %lld:", iter->first);
+          printf("extent %llu:", iter->first);
           for (server_set::iterator iter2 = iter->second.begin();
               iter2 != iter->second.end(); ++iter2) {
             printf(" %s", iter2->c_str());
@@ -480,12 +480,12 @@ fab::commit_change_wo(unsigned vid)
           state.server_to_extent_map[new_server].insert(*it);
           state.extent_to_server_map[*it].insert(new_server);
           state.extent_to_server_map[*it].erase(to_delete->first);
-          printf("assigned extent %lld to server %s\n", *it, new_server.c_str());
+          printf("assigned extent %llu to server %s\n", *it, new_server.c_str());
           if (new_server == cfg->myaddr()) {
             extent_timestamps new_timestamp;
             new_timestamp.valTs = new_timestamp.ordTs = 0;
             timestamp_map.insert( std::make_pair(*it, new_timestamp) );
-            printf("extent %lld assigned to me, adding to the queue\n",*it);
+            printf("extent %llu assigned to me, adding to the queue\n",*it);
             get_queue.enq(*it);
           }
         }
@@ -518,19 +518,19 @@ fab::update_metadata(std::string metadata)
     extent_protocol::extentid_t id;
     std::stringstream ss(metadata.substr(8));
     ss >> id;
-    printf("adding extent %lld to global state\n", id);
+    printf("adding extent %llu to global state\n", id);
     
     server_set new_servers;
     allocate_new(id, new_servers, state);
 
     if (new_servers.find(cfg->myaddr()) != new_servers.end()) {
-      printf("adding zero timestamps for extent %lld\n", id);
+      printf("adding zero timestamps for extent %llu\n", id);
       extent_timestamps new_timestamps;
       new_timestamps.valTs = new_timestamps.ordTs = 0;
       timestamp_map.insert(std::make_pair(id, new_timestamps));
     }
 
-    printf("adding extent %lld to the following servers:", id);
+    printf("adding extent %llu to the following servers:", id);
     state.extent_to_server_map.insert(std::make_pair(id, new_servers));
     for (server_set::iterator iter = new_servers.begin();
         iter != new_servers.end(); ++iter) {
@@ -543,7 +543,7 @@ fab::update_metadata(std::string metadata)
     extent_protocol::extentid_t id;
     std::stringstream ss(metadata.substr(11));
     ss >> id;
-    printf("removing extent %lld from global state\n", id);
+    printf("removing extent %llu from global state\n", id);
 
     // Retrieve set of servers that store the extent
     server_set servers = state.extent_to_server_map[id];
@@ -876,13 +876,13 @@ fab::breakpointreq(int b, int &r)
 }
 
 int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
-  printf("in client_put for id %lld with val %s\n", id, val.c_str());
+  printf("in client_put for id %llu with val %s\n", id, val.c_str());
 
   int num_tries_left = 3;
   extent_to_server_map_t::iterator iter = state.extent_to_server_map.find(id);
 
   while (num_tries_left > 0 && iter == state.extent_to_server_map.end()) {
-    printf("extent %lld not found, adding it\n", id);
+    printf("extent %llu not found, adding it\n", id);
     unsigned vid_cache = vid_commit;
     std::stringstream ss;
     ss << "add eid " << id;
@@ -898,7 +898,7 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
   fab_protocol::timestamp ts = fab_protocol::get_current_timestamp();
 
   if (iter == state.extent_to_server_map.end()) {
-    printf("Could not create extent %lld\n", id);
+    printf("Could not create extent %llu\n", id);
     return extent_protocol::IOERR;
   } else {
     server_set extent_group = iter->second;
@@ -959,20 +959,20 @@ int fab::client_put(extent_protocol::extentid_t id, std::string val, int& r) {
 
 int fab::client_getattr(extent_protocol::extentid_t id,
     extent_protocol::attr& attr) {
-  printf("in client_getattr for id %lld\n", id);
+  printf("in client_getattr for id %llu\n", id);
   std::string val;
   return client_getall(id, val, attr);
 }
 
 int fab::client_get(extent_protocol::extentid_t id, std::string& val) {
-  printf("in client_get for id %lld\n", id);
+  printf("in client_get for id %llu\n", id);
   extent_protocol::attr attr;
   return client_getall(id, val, attr);
 }
 
 int fab::client_getall(extent_protocol::extentid_t id, std::string& val,
     extent_protocol::attr& attr) {
-  printf("in client_getall for id %lld\n", id);
+  printf("in client_getall for id %llu\n", id);
 
   int ret = 0;
 
@@ -1086,7 +1086,7 @@ int fab::client_getall(extent_protocol::extentid_t id, std::string& val,
       }
     }
   } else {
-    printf("extent %lld not found in get.\n", id);
+    printf("extent %llu not found in get.\n", id);
     ret = extent_protocol::NOENT;
   }
 
@@ -1099,7 +1099,7 @@ int fab::client_remove(extent_protocol::extentid_t id, int &) {
 
   // Repeatedly try to remove id 
   while (num_tries_left > 0 && iter != state.extent_to_server_map.end()) {
-    printf("extent %lld found, removing it\n", id);
+    printf("extent %llu found, removing it\n", id);
     unsigned vid_cache = vid_commit;
     std::stringstream ss;
     ss << "remove eid " << id;
@@ -1113,7 +1113,7 @@ int fab::client_remove(extent_protocol::extentid_t id, int &) {
   }
   
   if (iter != state.extent_to_server_map.end()) {
-    printf("Could not remove extent %lld\n", id);
+    printf("Could not remove extent %llu\n", id);
     return extent_protocol::IOERR;
   }
   return extent_protocol::OK;
@@ -1125,13 +1125,13 @@ int fab::put(extent_protocol::extentid_t id, std::string val,
 
   timestamp_map_t::iterator iter = timestamp_map.find(id);
   if (iter == timestamp_map.end()) {
-    printf("ERROR: no timestamp for extent %lld found in put\n", id);
+    printf("ERROR: no timestamp for extent %llu found in put\n", id);
     status = fab_protocol::INTERNAL_ERR;
   } else {
     bool flag = (ts > iter->second.valTs && ts >= iter->second.ordTs);
     if (flag) {
       int r;
-      printf("put writing value for extent %lld: %s\n", id, val.c_str());
+      printf("put writing value for extent %llu: %s\n", id, val.c_str());
       int ret = fabes->put(id, val, r);
       if (ret != extent_protocol::OK) {
         status = fab_protocol::INTERNAL_ERR;
@@ -1151,7 +1151,7 @@ int fab::get(extent_protocol::extentid_t id, fab_protocol::fabresult& result) {
 
   timestamp_map_t::iterator iter = timestamp_map.find(id);
   if (iter == timestamp_map.end()) {
-    printf("ERROR: no timestamp for extent %lld found in get\n", id);
+    printf("ERROR: no timestamp for extent %llu found in get\n", id);
     result.status = fab_protocol::INTERNAL_ERR;
   } else {
     bool flag = iter->second.valTs >= iter->second.ordTs;
@@ -1190,7 +1190,7 @@ int fab::order(extent_protocol::extentid_t id, fab_protocol::timestamp ts,
 
   timestamp_map_t::iterator iter = timestamp_map.find(id);
   if (iter == timestamp_map.end()) {
-    printf("ERROR: no timestamp for extent %lld found in order\n", id);
+    printf("ERROR: no timestamp for extent %llu found in order\n", id);
     result.status = fab_protocol::INTERNAL_ERR;
   } else {
     bool flag = (ts > std::max(iter->second.valTs, iter->second.ordTs));
